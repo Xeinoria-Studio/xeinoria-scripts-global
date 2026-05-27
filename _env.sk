@@ -1,0 +1,19 @@
+# Environment variable accessor for all Xeinoria servers.
+# Requires skript-reflect (installed on all servers).
+#
+# Usage:
+#     set {_password} to env("REDIS_PASSWORD")
+#     set {_password} to env("REDIS_PASSWORD", "fallback-if-unset")
+#
+# Values come from /home/debian/xeinoria/.env.shared (chmod 600, NEVER committed),
+# sourced by start.sh. Server must be restarted for changes to .env.shared to apply
+# (the JVM only reads env vars at startup).
+
+import:
+    java.lang.System
+
+function env(name: text, default: text = "") :: text:
+    set {_v} to System.getenv({_name})
+    if {_v} is set:
+        return {_v}
+    return {_default}
