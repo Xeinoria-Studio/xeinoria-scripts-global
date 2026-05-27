@@ -1,0 +1,92 @@
+# Global StaffChat script — reads server identity from {server::id}
+# (set by _server_config.sk in each per-server repo).
+
+options:
+    sc_prefix: &8[&cStaffChat&8]&r
+    sc_perm: staffchat.use
+    sc_channel: staff:chat
+
+function scCanUse(p: player) :: boolean:
+    if {_p} has permission "{@sc_perm}":
+        return true
+    if {_p} has permission "staff":
+        return true
+    return false
+
+function scFormatLine(serverName: text, senderName: text, content: text, urgent: boolean) :: text:
+    if {_urgent} is true:
+        return "{@sc_prefix} &7[&f%{_serverName}%&7] &c%{_senderName}%&8: &c%{_content}%"
+    return "{@sc_prefix} &7[&f%{_serverName}%&7] &c%{_senderName}%&8: &f%{_content}%"
+
+function scPublish(senderName: text, content: text, urgent: boolean):
+    if {_urgent} is true:
+        send redis message "%{server::id}%|%{_senderName}%|1|%{_content}%" to channel "{@sc_channel}"
+        stop
+    send redis message "%{server::id}%|%{_senderName}%|0|%{_content}%" to channel "{@sc_channel}"
+
+function scBroadcastToStaff(line: text, urgent: boolean):
+    loop all players:
+        if scCanUse(loop-player) is true:
+            send {_line} to loop-player
+            if {_urgent} is true:
+                play sound "entity.experience_orb.pickup" with volume 1 and pitch 1 for loop-player
+    send {_line} to console
+
+on chat:
+    if message starts with "!":
+        if message is "!":
+            stop
+        if message is "!!":
+            stop
+
+        if scCanUse(player) is false:
+            send "{@sc_prefix} &cPas la permission." to player
+            stop
+
+        cancel event
+        set {_urgent} to false
+        if message starts with "!!":
+            set {_urgent} to true
+
+        set {_msg} to message
+        if {_urgent} is true:
+            set {_msg} to subtext of {_msg} from 3 to (length of {_msg})
+        else:
+            set {_msg} to subtext of {_msg} from 2 to (length of {_msg})
+
+        while {_msg} starts with " ":
+            set {_msg} to subtext of {_msg} from 2 to (length of {_msg})
+
+        if {_msg} is "":
+            if {_urgent} is true:
+                stop
+            send "{@sc_prefix} &cMessage vide." to player
+            stop
+
+        scPublish(name of player, {_msg}, {_urgent})
+
+on redis message:
+    if redis channel is "{@sc_channel}":
+        set {_raw} to redis message
+        set {_parts::*} to split {_raw} at "|"
+
+        set {_server} to {_parts::1}
+        set {_sender} to {_parts::2}
+        set {_urgentRaw} to {_parts::3}
+        set {_content} to {_parts::4}
+
+        if {_server} is not set:
+            stop
+        if {_sender} is not set:
+            stop
+        if {_urgentRaw} is not set:
+            stop
+        if {_content} is not set:
+            stop
+
+        set {_urgent} to false
+        if {_urgentRaw} is "1":
+            set {_urgent} to true
+
+        set {_line} to scFormatLine({_server}, {_sender}, {_content}, {_urgent})
+        scBroadcastToStaff({_line}, {_urgent})

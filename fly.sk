@@ -1,0 +1,165 @@
+options:
+	prefix: &6[Moderation] &r
+	perm_fly: fly.use
+	perm_fly_others: fly.others
+	
+	# canal redis
+	fly_channel: staff:fly
+	
+	# =========================================================
+	# HELPERS (local + fallback)
+	# =========================================================
+	
+function isFlyEnabled(name: text) :: boolean:
+	if {fly::%{_name}%} is set:
+		return true
+	return false
+	
+function applyFlyState(p: player):
+	# applique l'état fly local sans casser creative/spectator
+	set {_name} to name of {_p}
+	
+	if isFlyEnabled({_name}) is true:
+		allow flight for {_p}
+		set {_p}'s flight mode to true
+	else:
+		# si le joueur est en creative/spectator, on ne touche pas (ils ont le fly de base)
+		if gamemode of {_p} is creative:
+			stop
+		if gamemode of {_p} is spectator:
+			stop
+			
+		set {_p}'s flight mode to false
+		disallow flight for {_p}
+		
+function setFlyLocal(name: text, state: boolean):
+	if {_state} is true:
+		set {fly::%{_name}%} to true
+	else:
+		delete {fly::%{_name}%}
+		
+function broadcastFly(name: text, state: boolean):
+# si Redis est down, ça ne doit pas empêcher le local de marcher
+	if {_state} is true:
+		send redis message "%{_name}%|1" to channel "{@fly_channel}"
+	else:
+		send redis message "%{_name}%|0" to channel "{@fly_channel}"
+		
+		# =========================================================
+		# APPLY ON JOIN (fallback local)
+		# =========================================================
+		
+on join:
+	wait 3 ticks
+	applyFlyState(player)
+	
+	# (optionnel mais utile) si un staff change de gamemode, on réapplique
+on gamemode change:
+	applyFlyState(player)
+	
+	# =========================================================
+	# REDIS RECEIVE (sync temps réel)
+	# message: "<name>|<0/1>"
+	# =========================================================
+	
+on redis message:
+	if redis channel is "{@fly_channel}":
+		set {_parts::*} to split redis message at "|"
+		set {_name} to {_parts::1}
+		set {_state} to {_parts::2}
+		
+		if {_name} is not set:
+			stop
+			
+		if {_state} is "1":
+			setFlyLocal({_name}, true)
+		else:
+			setFlyLocal({_name}, false)
+			
+			# si le joueur est en ligne sur CE backend, on applique tout de suite
+		set {_p} to {_name} parsed as player
+		if {_p} is set:
+			applyFlyState({_p})
+			
+			# =========================================================
+			# COMMAND
+			# =========================================================
+
+#command to toggle fly to people without noktifying them (no send message)
+command /silentfly [<player>]:
+	permission: {@perm_fly}
+	permission message: "{@prefix}&cPas la permission."
+	trigger:
+		if arg-1 is set:
+			if player does not have permission "{@perm_fly_others}":
+				send "{@prefix}&cTu ne peux pas toggle les autres." to player
+				stop
+			set {_t} to arg-1
+		else:
+			set {_t} to player
+			
+		set {_name} to name of {_t}
+		
+		if isFlyEnabled({_name}) is true:
+			setFlyLocal({_name}, false)
+			if {_t} is set:
+				applyFlyState({_t})
+			broadcastFly({_name}, false)
+		else:
+			setFlyLocal({_name}, true)
+			if {_t} is set:
+				applyFlyState({_t})
+			broadcastFly({_name}, true)
+	
+			
+command /fly [<player>]:
+	permission: {@perm_fly}
+	permission message: "{@prefix}&cPas la permission."
+	trigger:
+		if arg-1 is set:
+			if player does not have permission "{@perm_fly_others}":
+				send "{@prefix}&cTu ne peux pas toggle les autres." to player
+				stop
+			set {_t} to arg-1
+		else:
+			set {_t} to player
+			
+		set {_name} to name of {_t}
+		
+		if isFlyEnabled({_name}) is true:
+			setFlyLocal({_name}, false)
+			if {_t} is set:
+				applyFlyState({_t})
+			broadcastFly({_name}, false)
+			
+			if {_t} is player:
+				send "{@prefix}&cFly désactivé." to player
+			else:
+				send "{@prefix}&cFly désactivé pour &e%{_t}%&c." to player
+				send "{@prefix}&cFly désactivé." to {_t}
+		else:
+			setFlyLocal({_name}, true)
+			if {_t} is set:
+				applyFlyState({_t})
+			broadcastFly({_name}, true)
+			
+			if {_t} is player:
+				send "{@prefix}&aFly activé." to player
+			else:
+				send "{@prefix}&aFly activé pour &e%{_t}%&a." to player
+				send "{@prefix}&aFly activé." to {_t}
+
+command /checkflystate [<player>]:
+	permission: {@perm_fly}
+	permission message: "{@prefix}&cPas la permission."
+	trigger:
+		if arg-1 is set:
+			if fly mode of arg-1 is true:
+				send "{@prefix}&a%arg-1% a le fly activé." to player
+			else:
+				send "{@prefix}&c%arg-1% n'a pas le fly activé." to player
+		else:
+			if fly mode of player is true:
+				send "{@prefix}&aTu as le fly activé." to player
+			else:
+				send "{@prefix}&cTu n'as pas le fly activé." to player 

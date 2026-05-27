@@ -1,0 +1,91 @@
+options:
+	prefix: &6[Moderation] &r
+	perm_use: back.use
+	perm_others: back.others
+	
+	# -------------------------
+	# FUNCTIONS
+	# -------------------------
+	
+function hasBackLoc(p: player) :: boolean:
+	if {backloc::%{_p}%} is set:
+		return true
+	return false
+	
+function getBackLoc(p: player) :: location:
+	return {backloc::%{_p}%}
+	
+function setBackLoc(p: player, l: location):
+	set {backloc::%{_p}%} to {_l}
+	
+function isBackIgnored(p: player) :: boolean:
+	if {backignore::%{_p}%} is set:
+		return true
+	return false
+	
+function startBackIgnore(p: player):
+	set {backignore::%{_p}%} to true
+	
+function stopBackIgnore(p: player):
+	delete {backignore::%{_p}%}
+	
+function doBack(executor: player, target: player):
+	if hasBackLoc({_target}) is false:
+		send "{@prefix}&cAucune position enregistrée." to {_executor}
+		stop
+		
+	set {_loc} to getBackLoc({_target})
+	
+	startBackIgnore({_target})
+	teleport {_target} to {_loc}
+	wait 1 tick
+	stopBackIgnore({_target})
+	
+	if {_executor} is {_target}:
+		send "{@prefix}&aRetour effectué." to {_executor}
+	else:
+		send "{@prefix}&a%{_target}% a été renvoyé à sa position précédente." to {_executor}
+		send "{@prefix}&aTu as été renvoyé par &e%{_executor}%&a." to {_target}
+		
+		# -------------------------
+		# EVENTS
+		# -------------------------
+		
+on teleport:
+	if event-entity is not a player:
+		stop
+		
+		# Ne pas enregistrer /back si c'est une ender pearl
+	if teleport cause is ender pearl:
+		stop
+		# Ne pas enregistrer /back si c'est un chorus fruit
+	if teleport cause is consumable effect:
+		stop
+		
+		# (garde ton anti-écrasement quand /back téléporte)
+		if isBackIgnored(player) is true:
+			stop
+		
+	set {_from} to past event-location
+	if {_from} is set:
+		setBackLoc(player, {_from})
+		
+on death:
+	if victim is a player:
+		setBackLoc(victim, location of victim)
+		
+		# -------------------------
+		# COMMAND
+		# -------------------------
+		
+command /back [<player>]:
+	permission: {@perm_use}
+	permission message: "{@prefix}&cTu n'as pas la permission."
+	trigger:
+		if arg-1 is set:
+			if player does not have permission "{@perm_others}":
+				send "{@prefix}&cTu ne peux pas utiliser /back sur les autres joueurs."
+				stop
+			doBack(player, arg-1)
+		else:
+			doBack(player, player)

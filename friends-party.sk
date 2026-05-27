@@ -1,0 +1,1462 @@
+# Global FriendsParty script — reads server identity from {server::id}
+# (set by _server_config.sk in each per-server repo).
+
+options:
+    fp_prefix: &8[&bFriendsParty&8]&r
+    fp_channel: network:friendsparty
+    fp_servers: survie, crea, honeypot, old, test, nwland, hub
+    fp_party_ignore_server: hub
+
+function fpNorm(t: text) :: text:
+    return lowercase {_t}
+
+function fpLocalServer() :: text:
+    return fpNorm({server::id})
+
+function fpServersRaw() :: text:
+    set {_raw} to fpNorm("{@fp_servers}")
+    replace all " " with "" in {_raw}
+    return {_raw}
+
+function fpFriendsKey(nameNorm: text) :: text:
+    return "fp:friends:%fpNorm({_nameNorm})%"
+
+function fpFriendReqKey(nameNorm: text) :: text:
+    return "fp:friend:req:%fpNorm({_nameNorm})%"
+
+function fpPartyLeaderKey(memberNorm: text) :: text:
+    return "fp:party:leader:%fpNorm({_memberNorm})%"
+
+function fpPartyMembersKey(leaderNorm: text) :: text:
+    return "fp:party:members:%fpNorm({_leaderNorm})%"
+
+function fpPartyInvitesKey(targetNorm: text) :: text:
+    return "fp:party:invites:%fpNorm({_targetNorm})%"
+
+function fpPartyLastInviteKey(targetNorm: text) :: text:
+    return "fp:party:lastinvite:%fpNorm({_targetNorm})%"
+
+function fpOnlineNameKey(nameNorm: text) :: text:
+    return "fp:online:name:%fpNorm({_nameNorm})%"
+
+function fpOnlineDisplayKey(nameNorm: text) :: text:
+    return "fp:online:display:%fpNorm({_nameNorm})%"
+
+function fpOnlineServerKey(serverNorm: text) :: text:
+    return "fp:online:server:%fpNorm({_serverNorm})%"
+
+function fpAdminKey(nameNorm: text) :: text:
+    return "fp:admin:%fpNorm({_nameNorm})%"
+
+function fpIsAdminCached(nameNorm: text) :: boolean:
+    set {_v} to fpRedisGet(fpAdminKey({_nameNorm}))
+    if {_v} is "1":
+        return true
+    return false
+
+function fpNotifyPrefKey(viewerNorm: text, kind: text) :: text:
+    return "fp:notify:%fpNorm({_viewerNorm})%:%{_kind}%"
+
+function fpNotifyEnabled(viewerNorm: text, kind: text) :: boolean:
+    set {_v} to fpRedisGet(fpNotifyPrefKey({_viewerNorm}, {_kind}))
+    if {_v} is "0":
+        return false
+    if {_v} is not set:
+        if {_kind} is "move":
+            return false
+    return true
+
+function fpNotifySetEnabled(viewerNorm: text, kind: text, enabled: boolean):
+    set {_k} to fpNotifyPrefKey({_viewerNorm}, {_kind})
+    if {_enabled} is true:
+        delete redis string {_k}
+    else:
+        set redis string {_k} to "0"
+
+function fpCsvContains(raw: text, item: text) :: boolean:
+    set {_it} to fpNorm({_item})
+    if {_raw} is not set:
+        return false
+    if {_raw} is "":
+        return false
+
+    set {_parts::*} to {_raw} split at ","
+    loop {_parts::*}:
+        if fpNorm(loop-value) is {_it}:
+            return true
+
+    return false
+
+function fpCsvAdd(raw: text, item: text) :: text:
+    set {_it} to fpNorm({_item})
+    if fpCsvContains({_raw}, {_it}) is true:
+        return {_raw}
+
+    if {_raw} is not set:
+        return {_it}
+    if {_raw} is "":
+        return {_it}
+
+    return "%{_raw}%,%{_it}%"
+
+function fpCsvRemove(raw: text, item: text) :: text:
+    set {_it} to fpNorm({_item})
+    if {_raw} is not set:
+        return ""
+    if {_raw} is "":
+        return ""
+
+    delete {_out::*}
+    set {_parts::*} to {_raw} split at ","
+    loop {_parts::*}:
+        set {_n} to fpNorm(loop-value)
+        if {_n} is not "":
+            if {_n} is not {_it}:
+                add {_n} to {_out::*}
+
+    if {_out::*} is not set:
+        return ""
+
+    return join {_out::*} with ","
+
+function fpRedisGet(key: text) :: text:
+    if {_key} exists:
+        set {_v} to redis string {_key}
+        if {_v} is set:
+            return {_v}
+    return ""
+
+function fpRedisSetOrDelete(key: text, value: text):
+    if {_value} is not set:
+        delete redis string {_key}
+        stop
+    if {_value} is "":
+        delete redis string {_key}
+        stop
+    set redis string {_key} to {_value}
+
+function fpPlayerByNorm(nameNorm: text) :: player:
+    set {_n} to fpNorm({_nameNorm})
+    loop all players:
+        if fpNorm(name of loop-player) is {_n}:
+            return loop-player
+
+function fpCanSeeVanished(viewer: player) :: boolean:
+    if {_viewer} has permission "premiumvanish.see":
+        return true
+    if {_viewer} has permission "staff":
+        return true
+    return false
+
+function fpNameIsVanished(nameNorm: text) :: boolean:
+    set {_n} to fpNorm({_nameNorm})
+
+    set {_p} to fpPlayerByNorm({_n})
+    if {_p} is set:
+        set {_v} to placeholder "premiumvanish_isvanished" from {_p}
+        if {_v} is "Yes":
+            return true
+        return false
+
+    set {_k} to "pm:visible:%{_n}%"
+    if {_k} exists:
+        set {_raw} to redis string {_k}
+        if {_raw} is "0":
+            return true
+
+    return false
+
+function fpDisplay(nameNorm: text) :: text:
+    set {_n} to fpNorm({_nameNorm})
+
+    set {_p} to fpPlayerByNorm({_n})
+    if {_p} is set:
+        return name of {_p}
+
+    set {_v} to fpRedisGet(fpOnlineDisplayKey({_n}))
+    if {_v} is not "":
+        return {_v}
+
+    return {_n}
+
+function fpNetworkServer(nameNorm: text) :: text:
+    set {_n} to fpNorm({_nameNorm})
+
+    # Priorite a Redis (frais) pour eviter la latence du cache local refresh.
+    set {_v} to fpRedisGet(fpOnlineNameKey({_n}))
+    if {_v} is not "":
+        return fpNorm({_v})
+
+    if {fp.net.prev.server::%{_n}%} is set:
+        return {fp.net.prev.server::%{_n}%}
+
+    return ""
+
+function fpIsOnline(nameNorm: text) :: boolean:
+    if fpNetworkServer({_nameNorm}) is "":
+        return false
+    return true
+
+function fpFriendRaw(nameNorm: text) :: text:
+    return fpRedisGet(fpFriendsKey({_nameNorm}))
+
+function fpFriendSetRaw(nameNorm: text, raw: text):
+    fpRedisSetOrDelete(fpFriendsKey({_nameNorm}), {_raw})
+
+function fpAreFriends(aNorm: text, bNorm: text) :: boolean:
+    return fpCsvContains(fpFriendRaw({_aNorm}), fpNorm({_bNorm}))
+
+function fpAddFriendBoth(aNorm: text, bNorm: text):
+    set {_a} to fpNorm({_aNorm})
+    set {_b} to fpNorm({_bNorm})
+
+    set {_rawA} to fpFriendRaw({_a})
+    set {_rawA} to fpCsvAdd({_rawA}, {_b})
+    fpFriendSetRaw({_a}, {_rawA})
+
+    set {_rawB} to fpFriendRaw({_b})
+    set {_rawB} to fpCsvAdd({_rawB}, {_a})
+    fpFriendSetRaw({_b}, {_rawB})
+
+function fpRemoveFriendBoth(aNorm: text, bNorm: text):
+    set {_a} to fpNorm({_aNorm})
+    set {_b} to fpNorm({_bNorm})
+
+    set {_rawA} to fpFriendRaw({_a})
+    set {_rawA} to fpCsvRemove({_rawA}, {_b})
+    fpFriendSetRaw({_a}, {_rawA})
+
+    set {_rawB} to fpFriendRaw({_b})
+    set {_rawB} to fpCsvRemove({_rawB}, {_a})
+    fpFriendSetRaw({_b}, {_rawB})
+
+function fpFriendReqRaw(targetNorm: text) :: text:
+    return fpRedisGet(fpFriendReqKey({_targetNorm}))
+
+function fpFriendReqSetRaw(targetNorm: text, raw: text):
+    fpRedisSetOrDelete(fpFriendReqKey({_targetNorm}), {_raw})
+
+function fpLastFriendRequest(targetNorm: text) :: text:
+    set {_raw} to fpFriendReqRaw({_targetNorm})
+    if {_raw} is "":
+        return ""
+
+    set {_parts::*} to {_raw} split at ","
+    if {_parts::*} is not set:
+        return ""
+
+    set {_lastIndex} to size of {_parts::*}
+    if {_lastIndex} <= 0:
+        return ""
+
+    return fpNorm({_parts::%{_lastIndex}%})
+
+function fpHasFriendRequest(targetNorm: text, fromNorm: text) :: boolean:
+    return fpCsvContains(fpFriendReqRaw({_targetNorm}), fpNorm({_fromNorm}))
+
+function fpAddFriendRequest(targetNorm: text, fromNorm: text):
+    set {_raw} to fpFriendReqRaw({_targetNorm})
+    set {_raw} to fpCsvAdd({_raw}, {_fromNorm})
+    fpFriendReqSetRaw({_targetNorm}, {_raw})
+
+function fpRemoveFriendRequest(targetNorm: text, fromNorm: text):
+    set {_raw} to fpFriendReqRaw({_targetNorm})
+    set {_raw} to fpCsvRemove({_raw}, {_fromNorm})
+    fpFriendReqSetRaw({_targetNorm}, {_raw})
+
+function fpPartyLeaderOf(memberNorm: text) :: text:
+    return fpNorm(fpRedisGet(fpPartyLeaderKey({_memberNorm})))
+
+function fpPartySetLeaderOf(memberNorm: text, leaderNorm: text):
+    fpRedisSetOrDelete(fpPartyLeaderKey({_memberNorm}), fpNorm({_leaderNorm}))
+
+function fpPartyMembersRaw(leaderNorm: text) :: text:
+    return fpRedisGet(fpPartyMembersKey({_leaderNorm}))
+
+function fpPartySetMembersRaw(leaderNorm: text, raw: text):
+    fpRedisSetOrDelete(fpPartyMembersKey({_leaderNorm}), {_raw})
+
+function fpPartyInvitesRaw(targetNorm: text) :: text:
+    return fpRedisGet(fpPartyInvitesKey({_targetNorm}))
+
+function fpPartyInvitesSetRaw(targetNorm: text, raw: text):
+    fpRedisSetOrDelete(fpPartyInvitesKey({_targetNorm}), {_raw})
+
+function fpPartyAddInvite(targetNorm: text, leaderNorm: text):
+    set {_raw} to fpPartyInvitesRaw({_targetNorm})
+    set {_raw} to fpCsvAdd({_raw}, {_leaderNorm})
+    fpPartyInvitesSetRaw({_targetNorm}, {_raw})
+    set redis string fpPartyLastInviteKey({_targetNorm}) to fpNorm({_leaderNorm})
+
+function fpPartyGetLastInvite(targetNorm: text) :: text:
+    return fpRedisGet(fpPartyLastInviteKey({_targetNorm}))
+
+function fpPartyRemoveInvite(targetNorm: text, leaderNorm: text):
+    set {_raw} to fpPartyInvitesRaw({_targetNorm})
+    set {_raw} to fpCsvRemove({_raw}, {_leaderNorm})
+    fpPartyInvitesSetRaw({_targetNorm}, {_raw})
+
+function fpPartyHasInvite(targetNorm: text, leaderNorm: text) :: boolean:
+    return fpCsvContains(fpPartyInvitesRaw({_targetNorm}), fpNorm({_leaderNorm}))
+
+function fpPartyIsLeader(nameNorm: text) :: boolean:
+    set {_n} to fpNorm({_nameNorm})
+    if fpPartyLeaderOf({_n}) is not {_n}:
+        return false
+    if fpPartyMembersRaw({_n}) is "":
+        return false
+    return true
+
+function fpPartyCreate(leaderNorm: text):
+    set {_l} to fpNorm({_leaderNorm})
+    fpPartySetLeaderOf({_l}, {_l})
+    fpPartySetMembersRaw({_l}, {_l})
+
+function fpPartyDisband(leaderNorm: text):
+    set {_l} to fpNorm({_leaderNorm})
+    set {_raw} to fpPartyMembersRaw({_l})
+    if {_raw} is not "":
+        set {_parts::*} to {_raw} split at ","
+        loop {_parts::*}:
+            set {_m} to fpNorm(loop-value)
+            if {_m} is not "":
+                delete redis string fpPartyLeaderKey({_m})
+
+    delete redis string fpPartyMembersKey({_l})
+
+function fpPartyAddMember(leaderNorm: text, memberNorm: text):
+    set {_l} to fpNorm({_leaderNorm})
+    set {_m} to fpNorm({_memberNorm})
+
+    set {_raw} to fpPartyMembersRaw({_l})
+    set {_raw} to fpCsvAdd({_raw}, {_m})
+    fpPartySetMembersRaw({_l}, {_raw})
+    fpPartySetLeaderOf({_m}, {_l})
+
+function fpPartyRemoveMember(leaderNorm: text, memberNorm: text):
+    set {_l} to fpNorm({_leaderNorm})
+    set {_m} to fpNorm({_memberNorm})
+
+    set {_raw} to fpPartyMembersRaw({_l})
+    set {_raw} to fpCsvRemove({_raw}, {_m})
+    fpPartySetMembersRaw({_l}, {_raw})
+    delete redis string fpPartyLeaderKey({_m})
+
+function fpPartyMemberCount(leaderNorm: text) :: number:
+    set {_l} to fpNorm({_leaderNorm})
+    set {_raw} to fpPartyMembersRaw({_l})
+    if {_raw} is "":
+        return 0
+    set {_parts::*} to {_raw} split at ","
+    return size of {_parts::*}
+
+function fpPartyOldestOnlineMember(leaderNorm: text, excludeNorm: text) :: text:
+    set {_l} to fpNorm({_leaderNorm})
+    set {_excl} to fpNorm({_excludeNorm})
+    set {_raw} to fpPartyMembersRaw({_l})
+    if {_raw} is "":
+        return ""
+    set {_parts::*} to {_raw} split at ","
+    loop {_parts::*}:
+        set {_n} to fpNorm(loop-value)
+        if {_n} is not "":
+            if {_n} is not {_excl}:
+                if fpNetworkServer({_n}) is not "":
+                    return {_n}
+    return ""
+
+function fpPartyAnyMemberExcept(leaderNorm: text, excludeNorm: text) :: text:
+    set {_l} to fpNorm({_leaderNorm})
+    set {_excl} to fpNorm({_excludeNorm})
+    set {_raw} to fpPartyMembersRaw({_l})
+    if {_raw} is "":
+        return ""
+    set {_parts::*} to {_raw} split at ","
+    loop {_parts::*}:
+        set {_n} to fpNorm(loop-value)
+        if {_n} is not "":
+            if {_n} is not {_excl}:
+                return {_n}
+    return ""
+
+function fpPartyTransferLeadership(oldLeaderNorm: text, newLeaderNorm: text, removeOld: boolean):
+    set {_old} to fpNorm({_oldLeaderNorm})
+    set {_new} to fpNorm({_newLeaderNorm})
+    if {_old} is {_new}:
+        stop
+    set {_raw} to fpPartyMembersRaw({_old})
+    if {_raw} is "":
+        stop
+    if {_removeOld} is true:
+        set {_raw} to fpCsvRemove({_raw}, {_old})
+        delete redis string fpPartyLeaderKey({_old})
+    set {_parts::*} to {_raw} split at ","
+    loop {_parts::*}:
+        set {_m} to fpNorm(loop-value)
+        if {_m} is not "":
+            fpPartySetLeaderOf({_m}, {_new})
+    fpPartySetMembersRaw({_new}, {_raw})
+    delete redis string fpPartyMembersKey({_old})
+    delete redis string fpPartyLeaderOfflineKey({_old})
+
+function fpPartyLeaderOfflineKey(leaderNorm: text) :: text:
+    return "fp:party:leader_offline_since:%fpNorm({_leaderNorm})%"
+
+function fpPartyOfflineLeadersKey() :: text:
+    return "fp:party:offline_leaders"
+
+function fpPartyOfflineLeadersAdd(leaderNorm: text):
+    set {_l} to fpNorm({_leaderNorm})
+    set {_raw} to fpRedisGet(fpPartyOfflineLeadersKey())
+    set {_raw} to fpCsvAdd({_raw}, {_l})
+    fpRedisSetOrDelete(fpPartyOfflineLeadersKey(), {_raw})
+
+function fpPartyOfflineLeadersRemove(leaderNorm: text):
+    set {_l} to fpNorm({_leaderNorm})
+    set {_raw} to fpRedisGet(fpPartyOfflineLeadersKey())
+    set {_raw} to fpCsvRemove({_raw}, {_l})
+    fpRedisSetOrDelete(fpPartyOfflineLeadersKey(), {_raw})
+
+function fpPartyBroadcastTo(membersCsv: text, msg: text):
+    if {_membersCsv} is "":
+        stop
+    send redis message "ptmsgto|%{_membersCsv}%|%{_msg}%" to channel "{@fp_channel}"
+
+function fpPartyBroadcast(leaderNorm: text, msg: text):
+    set {_raw} to fpPartyMembersRaw(fpNorm({_leaderNorm}))
+    if {_raw} is "":
+        stop
+    fpPartyBroadcastTo({_raw}, {_msg})
+
+function fpCheckOfflineLeaders():
+    set {_raw} to fpRedisGet(fpPartyOfflineLeadersKey())
+    if {_raw} is "":
+        stop
+    set {_now} to unix timestamp of now
+    set {_parts::*} to {_raw} split at ","
+    loop {_parts::*}:
+        set {_l} to fpNorm(loop-value)
+        if {_l} is not "":
+            # Si le chef est revenu en ligne, on retire le marqueur
+            if fpNetworkServer({_l}) is not "":
+                delete redis string fpPartyLeaderOfflineKey({_l})
+                fpPartyOfflineLeadersRemove({_l})
+            else:
+                # Si la party n'existe plus, nettoyer
+                if fpPartyMembersRaw({_l}) is "":
+                    delete redis string fpPartyLeaderOfflineKey({_l})
+                    fpPartyOfflineLeadersRemove({_l})
+                else:
+                    set {_tsStr} to fpRedisGet(fpPartyLeaderOfflineKey({_l}))
+                    set {_doPromote} to false
+                    if {_tsStr} is "":
+                        # Pas de timestamp, on en pose un et on attend
+                        set redis string fpPartyLeaderOfflineKey({_l}) to "%{_now}%"
+                    else:
+                        set {_ts} to {_tsStr} parsed as number
+                        if {_ts} is set:
+                            if {_now} - {_ts} >= 300:
+                                set {_doPromote} to true
+                    if {_doPromote} is true:
+                        # Si <=2 membres total, transfert inutile -> disband
+                        set {_count} to fpPartyMemberCount({_l})
+                        set {_oldRaw} to fpPartyMembersRaw({_l})
+                        set {_othersCsv} to fpCsvRemove({_oldRaw}, {_l})
+                        if {_count} <= 2:
+                            fpPartyDisband({_l})
+                            fpPartyOfflineLeadersRemove({_l})
+                            if {_othersCsv} is not "":
+                                fpPartyBroadcastTo({_othersCsv}, "&cLa party a ete dissoute (chef inactif).")
+                        else:
+                            set {_new} to fpPartyOldestOnlineMember({_l}, {_l})
+                            if {_new} is not "":
+                                fpPartyTransferLeadership({_l}, {_new}, false)
+                                fpPartyOfflineLeadersRemove({_l})
+                                fpPartyBroadcast({_new}, "&eLe chef &f%fpDisplay({_l})% &eest deconnecte depuis trop longtemps. &f%fpDisplay({_new})% &eest le nouveau chef.")
+
+function fpTell(p: player, msg: text):
+    send "{@fp_prefix} %{_msg}%" to {_p}
+
+function fpNotifyFriendsAdv(actorNorm: text, action: text, fromServer: text, toServer: text, includeStaff: boolean, includeNonStaff: boolean):
+    set {_actor} to fpNorm({_actorNorm})
+    set {_display} to fpDisplay({_actor})
+    set {_actorIsAdmin} to fpIsAdminCached({_actor})
+
+    # up = connexion proxy (1ere arrivee, typiquement sur hub).
+    # down = deconnexion proxy (derniere sortie, depuis n'importe quel serveur).
+    # move = changement de serveur backend.
+
+    # Filtre: on ne notifie pas un move dont la destination est le hub.
+    if {_action} is "move":
+        if {_toServer} is fpNorm("{@fp_party_ignore_server}"):
+            stop
+
+    # Determiner la cle de preference (kind) pour le viewer
+    set {_kind} to ""
+    if {_action} is "up":
+        set {_kind} to "connect"
+    else if {_action} is "down":
+        set {_kind} to "disconnect"
+    else if {_action} is "move":
+        set {_kind} to "move"
+    else:
+        stop
+
+    loop all players:
+        set {_viewerNorm} to fpNorm(name of loop-player)
+        if {_viewerNorm} is not {_actor}:
+            if fpAreFriends({_viewerNorm}, {_actor}) is true:
+                set {_isStaff} to fpCanSeeVanished(loop-player)
+                set {_show} to false
+                if {_isStaff} is true:
+                    if {_includeStaff} is true:
+                        set {_show} to true
+                else:
+                    if {_includeNonStaff} is true:
+                        set {_show} to true
+                # Vie privee admin: les non-staff ne voient aucune notif (connect/disconnect/move) d'un admin.
+                if {_show} is true:
+                    if {_actorIsAdmin} is true:
+                        if {_isStaff} is false:
+                            set {_show} to false
+                # Preference utilisateur
+                if {_show} is true:
+                    if fpNotifyEnabled({_viewerNorm}, {_kind}) is false:
+                        set {_show} to false
+                if {_show} is true:
+                    if {_action} is "up":
+                        fpTell(loop-player, "&a%{_display}% &7vient de se connecter.")
+                    else if {_action} is "down":
+                        fpTell(loop-player, "&c%{_display}% &7vient de se deconnecter.")
+                    else if {_action} is "move":
+                        fpTell(loop-player, "&e%{_display}% &7est passe sur &f%{_toServer}%&7.")
+
+function fpNotifyFriends(actorNorm: text, action: text, fromServer: text, toServer: text):
+    # Compat: fonction historique. Comportement: si l'acteur est vanished,
+    # seuls les staff voient; sinon tout le monde voit.
+    set {_actor} to fpNorm({_actorNorm})
+    set {_van} to fpNameIsVanished({_actor})
+    if {_van} is true:
+        fpNotifyFriendsAdv({_actor}, {_action}, {_fromServer}, {_toServer}, true, false)
+    else:
+        fpNotifyFriendsAdv({_actor}, {_action}, {_fromServer}, {_toServer}, true, true)
+
+function fpPublishLocalSnapshot():
+    set {_server} to fpLocalServer()
+    set {_csv} to ""
+
+    loop all players:
+        set {_n} to fpNorm(name of loop-player)
+        if {_n} is not "":
+            if {_csv} is "":
+                set {_csv} to {_n}
+            else:
+                set {_csv} to "%{_csv}%,%{_n}%"
+            set redis string fpOnlineNameKey({_n}) to {_server}
+            set redis string fpOnlineDisplayKey({_n}) to name of loop-player
+
+    if {_csv} is "":
+        delete redis string fpOnlineServerKey({_server})
+        stop
+
+    set redis string fpOnlineServerKey({_server}) to {_csv}
+
+function fpPartyPullLocalMembers(leaderNorm: text, destinationServer: text, manual: boolean):
+    set {_leader} to fpNorm({_leaderNorm})
+    set {_dest} to fpNorm({_destinationServer})
+
+    # Anti-spam: si on est deja sur le serveur de destination, rien a faire.
+    if fpLocalServer() is {_dest}:
+        stop
+
+    loop all players:
+        set {_n} to fpNorm(name of loop-player)
+        if {_n} is not {_leader}:
+            if fpPartyLeaderOf({_n}) is {_leader}:
+                # Anti-spam: si Redis indique deja le membre sur la destination, on saute.
+                set {_curSrv} to fpRedisGet(fpOnlineNameKey({_n}))
+                if fpNorm({_curSrv}) is not {_dest}:
+                    send loop-player to server {_dest}
+                    if {_manual} is true:
+                        fpTell(loop-player, "&bTon chef de party te ramene sur &f%{_dest}%&b.")
+                    else:
+                        fpTell(loop-player, "&bParty follow vers &f%{_dest}%&b.")
+
+function fpRefreshNetworkState():
+    delete {fp.net.now.server::*}
+    delete {fp.net.now.display::*}
+
+    set {_serversRaw} to fpServersRaw()
+    if {_serversRaw} is "":
+        stop
+
+    set {_servers::*} to {_serversRaw} split at ","
+    loop {_servers::*}:
+        set {_serverName} to fpNorm(loop-value)
+        if {_serverName} is not "":
+            set {_raw} to fpRedisGet(fpOnlineServerKey({_serverName}))
+            if {_raw} is not "":
+                set {_names::*} to {_raw} split at ","
+                loop {_names::*}:
+                    set {_n} to fpNorm(loop-value-2)
+                    if {_n} is not "":
+                        set {fp.net.now.server::%{_n}%} to {_serverName}
+                        set {_display} to fpRedisGet(fpOnlineDisplayKey({_n}))
+                        if {_display} is "":
+                            set {_display} to {_n}
+                        set {fp.net.now.display::%{_n}%} to {_display}
+
+    loop {fp.net.prev.server::*}:
+        set {_n} to loop-index
+        set {_old} to loop-value
+        set {_new} to {fp.net.now.server::%{_n}%}
+
+        if {_new} is not set:
+            # Etat: joueur disparu. Les notifications sont event-driven (Redis pub/sub).
+            # Ce passage sert juste de filet de securite pour nettoyer Redis.
+            delete redis string fpOnlineNameKey({_n})
+            delete redis string fpOnlineDisplayKey({_n})
+        else if {_new} is not {_old}:
+            # Changement de serveur. Notifications event-driven; on garde le party follow.
+            if fpPartyIsLeader({_n}) is true:
+                if {_new} is not fpNorm("{@fp_party_ignore_server}"):
+                    fpPartyPullLocalMembers({_n}, {_new}, false)
+
+    # Pas de notif "up" en periodique: events Redis s'en chargent.
+
+    delete {fp.net.prev.server::*}
+    delete {fp.net.prev.display::*}
+
+    loop {fp.net.now.server::*}:
+        set {fp.net.prev.server::%loop-index%} to loop-value
+
+    loop {fp.net.now.display::*}:
+        set {fp.net.prev.display::%loop-index%} to loop-value
+
+    delete {fp.net.now.server::*}
+    delete {fp.net.now.display::*}
+
+on load:
+    fpPublishLocalSnapshot()
+    fpRefreshNetworkState()
+
+on unload:
+    delete redis string fpOnlineServerKey(fpLocalServer())
+
+on join:
+    fpPublishLocalSnapshot()
+    set {_self} to fpNorm(name of player)
+    delete redis string fpPartyLeaderOfflineKey({_self})
+    fpPartyOfflineLeadersRemove({_self})
+    set {_isVan} to pmIsVanished(player)
+    set {fp.local.vanish.cache::%{_self}%} to {_isVan}
+    set {_vanFlag} to "0"
+    if {_isVan} is true:
+        set {_vanFlag} to "1"
+    # Maj statut admin (perm staff ou premiumvanish.see)
+    if fpCanSeeVanished(player) is true:
+        set redis string fpAdminKey({_self}) to "1"
+    else:
+        delete redis string fpAdminKey({_self})
+    send redis message "fpev|j|%{_self}%|%fpLocalServer()%|%{_vanFlag}%" to channel "{@fp_channel}"
+
+on quit:
+    set {_self} to fpNorm(name of player)
+    if fpPartyIsLeader({_self}) is true:
+        if fpPartyMemberCount({_self}) > 1:
+            set {_ts} to "%unix timestamp of now%"
+            set redis string fpPartyLeaderOfflineKey({_self}) to {_ts}
+            fpPartyOfflineLeadersAdd({_self})
+    set {_wasVan} to false
+    if {fp.local.vanish.cache::%{_self}%} is true:
+        set {_wasVan} to true
+    delete {fp.local.vanish.cache::%{_self}%}
+    set {_vanFlag} to "0"
+    if {_wasVan} is true:
+        set {_vanFlag} to "1"
+    send redis message "fpev|q|%{_self}%|%fpLocalServer()%|%{_vanFlag}%" to channel "{@fp_channel}"
+    wait 1 tick
+    fpPublishLocalSnapshot()
+    # Cleanup Redis seulement si le joueur n'est PAS reapparu sur un autre serveur
+    wait 1 second
+    set {_now} to fpRedisGet(fpOnlineNameKey({_self}))
+    if {_now} is "":
+        delete redis string fpOnlineDisplayKey({_self})
+        delete redis string "pm:visible:%{_self}%"
+    else if fpNorm({_now}) is fpLocalServer():
+        # Toujours marque sur ce serveur (incoherence) -> nettoyer
+        delete redis string fpOnlineNameKey({_self})
+        delete redis string fpOnlineDisplayKey({_self})
+        delete redis string "pm:visible:%{_self}%"
+
+every 5 seconds:
+    fpPublishLocalSnapshot()
+    set {_s} to fpLocalServer()
+    loop all players:
+        set {_n} to fpNorm(name of loop-player)
+        set {_now} to pmIsVanished(loop-player)
+        set {_was} to {fp.local.vanish.cache::%{_n}%}
+        if {_was} is not set:
+            set {fp.local.vanish.cache::%{_n}%} to {_now}
+        else:
+            if {_now} is not {_was}:
+                set {fp.local.vanish.cache::%{_n}%} to {_now}
+                if {_now} is true:
+                    send redis message "fpev|vq|%{_n}%|%{_s}%|0" to channel "{@fp_channel}"
+                else:
+                    send redis message "fpev|vj|%{_n}%|%{_s}%|0" to channel "{@fp_channel}"
+
+every 30 seconds:
+    fpRefreshNetworkState()
+
+every 60 seconds:
+    fpCheckOfflineLeaders()
+
+on redis message:
+    if redis channel is not "{@fp_channel}":
+        stop
+
+    set {_parts::*} to split redis message at "|"
+    set {_action} to fpNorm({_parts::1})
+
+    if {_action} is "freq":
+        set {_from} to fpNorm({_parts::2})
+        set {_to} to fpNorm({_parts::3})
+        set {_toP} to fpPlayerByNorm({_to})
+        if {_toP} is set:
+            fpTell({_toP}, "&e%fpDisplay({_from})% &7veut t'ajouter en ami. &f/friend accept %fpDisplay({_from})%")
+        stop
+
+    if {_action} is "facc":
+        set {_by} to fpNorm({_parts::2})
+        set {_to} to fpNorm({_parts::3})
+        set {_toP} to fpPlayerByNorm({_to})
+        if {_toP} is set:
+            fpTell({_toP}, "&a%fpDisplay({_by})% &7a accepte ta demande d'ami.")
+        stop
+
+    if {_action} is "ptinv":
+        set {_leader} to fpNorm({_parts::2})
+        set {_target} to fpNorm({_parts::3})
+        set {_p} to fpPlayerByNorm({_target})
+        if {_p} is set:
+            fpTell({_p}, "&bInvitation de party de &f%fpDisplay({_leader})%&b. &f/party accept %fpDisplay({_leader})%")
+        stop
+
+    if {_action} is "ptacc":
+        set {_member} to fpNorm({_parts::2})
+        set {_leader} to fpNorm({_parts::3})
+        set {_leaderP} to fpPlayerByNorm({_leader})
+        if {_leaderP} is set:
+            fpTell({_leaderP}, "&a%fpDisplay({_member})% &7a rejoint ta party.")
+        stop
+
+    if {_action} is "ptpull":
+        set {_leader} to fpNorm({_parts::2})
+        set {_dest} to fpNorm({_parts::3})
+        set {_manualRaw} to {_parts::4}
+
+        set {_manual} to false
+        if {_manualRaw} is "1":
+            set {_manual} to true
+
+        fpPartyPullLocalMembers({_leader}, {_dest}, {_manual})
+        stop
+
+    if {_action} is "ptmsgto":
+        set {_csv} to {_parts::2}
+        set {_msg} to {_parts::3}
+        if size of {_parts::*} > 3:
+            loop integers from 4 to size of {_parts::*}:
+                set {_msg} to "%{_msg}%|%{_parts::%loop-value%}%"
+        if {_csv} is "":
+            stop
+        set {_pm::*} to {_csv} split at ","
+        loop {_pm::*}:
+            set {_n} to fpNorm(loop-value)
+            if {_n} is not "":
+                set {_p} to fpPlayerByNorm({_n})
+                if {_p} is set:
+                    fpTell({_p}, {_msg})
+        stop
+
+    if {_action} is "fpev":
+        set {_sub} to fpNorm({_parts::2})
+        set {_n} to fpNorm({_parts::3})
+        set {_srv} to fpNorm({_parts::4})
+        set {_van} to {_parts::5}
+        if {_van} is not "1":
+            set {_van} to "0"
+        if {_sub} is "q":
+            set {fp.evt.qsrv::%{_n}%} to {_srv}
+            set {fp.evt.qvan::%{_n}%} to {_van}
+            wait 1.5 seconds
+            if {fp.evt.qsrv::%{_n}%} is set:
+                set {_from} to {fp.evt.qsrv::%{_n}%}
+                set {_qvan} to {fp.evt.qvan::%{_n}%}
+                delete {fp.evt.qsrv::%{_n}%}
+                delete {fp.evt.qvan::%{_n}%}
+                if {fp.evt.movetosrv::%{_n}%} is set:
+                    set {_to} to {fp.evt.movetosrv::%{_n}%}
+                    set {_jvan} to {fp.evt.movevan::%{_n}%}
+                    delete {fp.evt.movetosrv::%{_n}%}
+                    delete {fp.evt.movevan::%{_n}%}
+                    if {_jvan} is "1":
+                        fpNotifyFriendsAdv({_n}, "move", {_from}, {_to}, true, false)
+                    else:
+                        fpNotifyFriendsAdv({_n}, "move", {_from}, {_to}, true, true)
+                else:
+                    if {_qvan} is "1":
+                        fpNotifyFriendsAdv({_n}, "down", {_from}, "", true, false)
+                    else:
+                        fpNotifyFriendsAdv({_n}, "down", {_from}, "", true, true)
+            stop
+        if {_sub} is "j":
+            if {fp.evt.qsrv::%{_n}%} is set:
+                set {fp.evt.movetosrv::%{_n}%} to {_srv}
+                set {fp.evt.movevan::%{_n}%} to {_van}
+            else:
+                if {_van} is "1":
+                    fpNotifyFriendsAdv({_n}, "up", "", {_srv}, true, false)
+                else:
+                    fpNotifyFriendsAdv({_n}, "up", "", {_srv}, true, true)
+            # Party follow event-driven: si le joueur est leader, ramener les membres immediatement.
+            if fpPartyIsLeader({_n}) is true:
+                if {_srv} is not fpNorm("{@fp_party_ignore_server}"):
+                    fpPartyPullLocalMembers({_n}, {_srv}, false)
+            stop
+        if {_sub} is "vq":
+            set redis string "pm:visible:%{_n}%" to "0"
+            fpNotifyFriendsAdv({_n}, "down", {_srv}, "", false, true)
+            stop
+        if {_sub} is "vj":
+            set redis string "pm:visible:%{_n}%" to "1"
+            fpNotifyFriendsAdv({_n}, "up", "", {_srv}, false, true)
+            stop
+        stop
+
+command /friend [<text>] [<text>] [<text>]:
+    aliases: /friends, /f
+    trigger:
+        set {_self} to fpNorm(name of player)
+        set {_sub} to fpNorm(arg-1)
+
+        if {_sub} is "":
+            set {_sub} to "list"
+
+        if {_sub} is "add":
+            set {_targetRaw} to arg-2
+            if {_targetRaw} is not set:
+                fpTell(player, "&cUsage: /friend add <joueur>")
+                stop
+
+            set {_target} to fpNorm({_targetRaw})
+            if {_target} is {_self}:
+                fpTell(player, "&cTu ne peux pas t'ajouter toi-meme.")
+                stop
+
+            if fpAreFriends({_self}, {_target}) is true:
+                fpTell(player, "&eVous etes deja amis.")
+                stop
+
+            if fpHasFriendRequest({_target}, {_self}) is true:
+                fpTell(player, "&eDemande deja envoyee.")
+                stop
+
+            fpAddFriendRequest({_target}, {_self})
+            send redis message "freq|%{_self}%|%{_target}%" to channel "{@fp_channel}"
+            fpTell(player, "&aDemande d'ami envoyee a &f%fpDisplay({_target})%&a.")
+            stop
+
+        if {_sub} is "accept":
+            set {_fromRaw} to arg-2
+            if {_fromRaw} is not set:
+                set {_from} to fpLastFriendRequest({_self})
+                if {_from} is "":
+                    fpTell(player, "&cAucune demande en attente.")
+                    stop
+            else:
+                set {_from} to fpNorm({_fromRaw})
+
+            if fpHasFriendRequest({_self}, {_from}) is false:
+                fpTell(player, "&cAucune demande de ce joueur.")
+                stop
+
+            fpRemoveFriendRequest({_self}, {_from})
+            fpAddFriendBoth({_self}, {_from})
+            send redis message "facc|%{_self}%|%{_from}%" to channel "{@fp_channel}"
+            fpTell(player, "&aTu es maintenant ami avec &f%fpDisplay({_from})%&a.")
+            stop
+
+        if {_sub} is "deny":
+            set {_fromRaw} to arg-2
+            if {_fromRaw} is not set:
+                fpTell(player, "&cUsage: /friend deny <joueur>")
+                stop
+
+            set {_from} to fpNorm({_fromRaw})
+            if fpHasFriendRequest({_self}, {_from}) is false:
+                fpTell(player, "&cAucune demande de ce joueur.")
+                stop
+
+            fpRemoveFriendRequest({_self}, {_from})
+            fpTell(player, "&eDemande refusee.")
+            stop
+
+        if {_sub} is "remove":
+            set {_targetRaw} to arg-2
+            if {_targetRaw} is not set:
+                fpTell(player, "&cUsage: /friend remove <joueur>")
+                stop
+
+            set {_target} to fpNorm({_targetRaw})
+            if fpAreFriends({_self}, {_target}) is false:
+                fpTell(player, "&cVous n'etes pas amis.")
+                stop
+
+            fpRemoveFriendBoth({_self}, {_target})
+            fpTell(player, "&eAmi retire: &f%fpDisplay({_target})%&e.")
+            stop
+
+        if {_sub} is "requests":
+            set {_raw} to fpFriendReqRaw({_self})
+            if {_raw} is "":
+                fpTell(player, "&7Aucune demande en attente.")
+                stop
+
+            set {_parts::*} to {_raw} split at ","
+            fpTell(player, "&bDemandes en attente (&f%size of {_parts::*}%&b):")
+            loop {_parts::*}:
+                send "&8- &f%fpDisplay(loop-value)%" to player
+            stop
+
+        if {_sub} is "list":
+            set {_raw} to fpFriendRaw({_self})
+            if {_raw} is "":
+                fpTell(player, "&7Tu n'as pas encore d'amis.")
+                stop
+
+            set {_parts::*} to {_raw} split at ","
+            fpTell(player, "&bListe d'amis (&f%size of {_parts::*}%&b):")
+            set {_canStaff} to fpCanSeeVanished(player)
+            loop {_parts::*}:
+                set {_n} to fpNorm(loop-value)
+                set {_server} to fpNetworkServer({_n})
+                if {_server} is "":
+                    send "&8- &f%fpDisplay({_n})% &8(&coffline&8)" to player
+                else:
+                    set {_friendIsAdmin} to fpIsAdminCached({_n})
+                    set {_friendIsVan} to fpNameIsVanished({_n})
+                    if {_friendIsVan} is true:
+                        if {_canStaff} is true:
+                            send "&8- &f%fpDisplay({_n})% &8(&a%{_server}%&8)" to player
+                        else:
+                            send "&8- &f%fpDisplay({_n})% &8(&coffline&8)" to player
+                    else if {_friendIsAdmin} is true:
+                        if {_canStaff} is true:
+                            send "&8- &f%fpDisplay({_n})% &8(&a%{_server}%&8)" to player
+                        else:
+                            send "&8- &f%fpDisplay({_n})% &8(&aen ligne&8)" to player
+                    else:
+                        send "&8- &f%fpDisplay({_n})% &8(&a%{_server}%&8)" to player
+            stop
+
+        if {_sub} is "notify":
+            set {_kindRaw} to arg-2
+            set {_valRaw} to arg-3
+            if {_kindRaw} is not set:
+                # Affichage de l'etat
+                set {_c} to "&aON"
+                if fpNotifyEnabled({_self}, "connect") is false:
+                    set {_c} to "&cOFF"
+                set {_d} to "&aON"
+                if fpNotifyEnabled({_self}, "disconnect") is false:
+                    set {_d} to "&cOFF"
+                set {_m} to "&aON"
+                if fpNotifyEnabled({_self}, "move") is false:
+                    set {_m} to "&cOFF"
+                fpTell(player, "&bNotifications:")
+                send "&8- &fconnect: %{_c}%" to player
+                send "&8- &fdisconnect: %{_d}%" to player
+                send "&8- &fmove: %{_m}%" to player
+                send "&7Usage: /friend notify <connect|disconnect|move|all> [on|off]" to player
+                stop
+
+            set {_kind} to fpNorm({_kindRaw})
+            if {_kind} is not "connect":
+                if {_kind} is not "disconnect":
+                    if {_kind} is not "move":
+                        if {_kind} is not "all":
+                            fpTell(player, "&cType inconnu. Utilise: connect, disconnect, move, all")
+                            stop
+
+            # Determine la valeur cible
+            set {_setMode} to "toggle"
+            set {_target} to true
+            if {_valRaw} is set:
+                set {_v} to fpNorm({_valRaw})
+                if {_v} is "on":
+                    set {_setMode} to "explicit"
+                    set {_target} to true
+                else if {_v} is "off":
+                    set {_setMode} to "explicit"
+                    set {_target} to false
+                else if {_v} is "true":
+                    set {_setMode} to "explicit"
+                    set {_target} to true
+                else if {_v} is "false":
+                    set {_setMode} to "explicit"
+                    set {_target} to false
+                else:
+                    fpTell(player, "&cValeur invalide. Utilise: on/off")
+                    stop
+
+            if {_kind} is "all":
+                if {_setMode} is "toggle":
+                    # Toggle global: si au moins une est ON, on tout met OFF; sinon tout ON
+                    set {_anyOn} to false
+                    if fpNotifyEnabled({_self}, "connect") is true:
+                        set {_anyOn} to true
+                    if fpNotifyEnabled({_self}, "disconnect") is true:
+                        set {_anyOn} to true
+                    if fpNotifyEnabled({_self}, "move") is true:
+                        set {_anyOn} to true
+                    set {_target} to true
+                    if {_anyOn} is true:
+                        set {_target} to false
+                fpNotifySetEnabled({_self}, "connect", {_target})
+                fpNotifySetEnabled({_self}, "disconnect", {_target})
+                fpNotifySetEnabled({_self}, "move", {_target})
+                if {_target} is true:
+                    fpTell(player, "&aToutes les notifications &7activees.")
+                else:
+                    fpTell(player, "&cToutes les notifications &7desactivees.")
+                stop
+
+            if {_setMode} is "toggle":
+                set {_target} to true
+                if fpNotifyEnabled({_self}, {_kind}) is true:
+                    set {_target} to false
+            fpNotifySetEnabled({_self}, {_kind}, {_target})
+            if {_target} is true:
+                fpTell(player, "&7Notifications &f%{_kind}% &7-> &aON&7.")
+            else:
+                fpTell(player, "&7Notifications &f%{_kind}% &7-> &cOFF&7.")
+            stop
+
+        fpTell(player, "&7/friend add|accept|deny|remove|requests|list|notify")
+
+command /party [<text>] [<text>]:
+    aliases: /p
+    trigger:
+        set {_self} to fpNorm(name of player)
+        set {_sub} to fpNorm(arg-1)
+
+        if {_sub} is "":
+            set {_sub} to "list"
+
+        if {_sub} is "create":
+            if fpPartyLeaderOf({_self}) is not "":
+                fpTell(player, "&cTu es deja dans une party.")
+                stop
+
+            fpPartyCreate({_self})
+            fpTell(player, "&aParty creee.")
+            stop
+
+        if {_sub} is "invite":
+            set {_leader} to fpPartyLeaderOf({_self})
+            if {_leader} is "":
+                fpPartyCreate({_self})
+                set {_leader} to {_self}
+                fpTell(player, "&aParty creee automatiquement.")
+            if {_leader} is not {_self}:
+                fpTell(player, "&cSeul le chef peut inviter.")
+                stop
+
+            set {_targetRaw} to arg-2
+            if {_targetRaw} is not set:
+                fpTell(player, "&cUsage: /party invite <joueur>")
+                stop
+
+            set {_target} to fpNorm({_targetRaw})
+            if {_target} is {_self}:
+                fpTell(player, "&cTu ne peux pas t'inviter.")
+                stop
+
+            if fpNetworkServer({_target}) is "":
+                fpTell(player, "&cCe joueur n'est pas en ligne sur le reseau.")
+                stop
+
+            if fpPartyLeaderOf({_target}) is not "":
+                fpTell(player, "&cCe joueur est deja dans une party.")
+                stop
+
+            if fpPartyHasInvite({_target}, {_self}) is true:
+                fpTell(player, "&eInvitation deja envoyee.")
+                stop
+
+            fpPartyAddInvite({_target}, {_self})
+            send redis message "ptinv|%{_self}%|%{_target}%" to channel "{@fp_channel}"
+            fpTell(player, "&aInvitation envoyee a &f%fpDisplay({_target})%&a.")
+            stop
+
+        if {_sub} is "accept":
+            set {_leaderRaw} to arg-2
+            if {_leaderRaw} is not set:
+                set {_leaderRaw} to fpPartyGetLastInvite({_self})
+                if {_leaderRaw} is "":
+                    fpTell(player, "&cAucune invitation. Usage: /party accept [chef]")
+                    stop
+
+            if fpPartyLeaderOf({_self}) is not "":
+                fpTell(player, "&cTu es deja dans une party.")
+                stop
+
+            set {_leader} to fpNorm({_leaderRaw})
+            if fpPartyHasInvite({_self}, {_leader}) is false:
+                fpTell(player, "&cAucune invitation de ce chef.")
+                stop
+
+            if fpPartyIsLeader({_leader}) is false:
+                fpPartyRemoveInvite({_self}, {_leader})
+                fpTell(player, "&cCette party n'existe plus.")
+                stop
+
+            fpPartyRemoveInvite({_self}, {_leader})
+            fpPartyAddMember({_leader}, {_self})
+            send redis message "ptacc|%{_self}%|%{_leader}%" to channel "{@fp_channel}"
+            fpPartyBroadcast({_leader}, "&a%fpDisplay({_self})% &7a rejoint la party.")
+            fpTell(player, "&aTu as rejoint la party de &f%fpDisplay({_leader})%&a.")
+            stop
+
+        if {_sub} is "deny":
+            set {_leaderRaw} to arg-2
+            if {_leaderRaw} is not set:
+                fpTell(player, "&cUsage: /party deny <chef>")
+                stop
+
+            set {_leader} to fpNorm({_leaderRaw})
+            if fpPartyHasInvite({_self}, {_leader}) is false:
+                fpTell(player, "&cAucune invitation de ce chef.")
+                stop
+
+            fpPartyRemoveInvite({_self}, {_leader})
+            fpTell(player, "&eInvitation refusee.")
+            stop
+
+        if {_sub} is "leave":
+            set {_leader} to fpPartyLeaderOf({_self})
+            if {_leader} is "":
+                fpTell(player, "&cTu n'es pas dans une party.")
+                stop
+
+            if {_leader} is {_self}:
+                # Le chef quitte. Si <=2 membres total (chef + 1), on dissout direct.
+                set {_count} to fpPartyMemberCount({_self})
+                set {_oldRaw} to fpPartyMembersRaw({_self})
+                set {_othersCsv} to fpCsvRemove({_oldRaw}, {_self})
+                if {_count} <= 2:
+                    fpPartyDisband({_self})
+                    if {_othersCsv} is not "":
+                        fpPartyBroadcastTo({_othersCsv}, "&cLa party a ete dissoute (chef parti).")
+                    fpTell(player, "&eParty dissoute.")
+                    stop
+                set {_new} to fpPartyOldestOnlineMember({_self}, {_self})
+                if {_new} is "":
+                    set {_new} to fpPartyAnyMemberExcept({_self}, {_self})
+                if {_new} is "":
+                    fpPartyDisband({_self})
+                    fpTell(player, "&eParty dissoute.")
+                    stop
+                fpPartyTransferLeadership({_self}, {_new}, true)
+                fpPartyBroadcastTo({_othersCsv}, "&eLe chef &f%fpDisplay({_self})% &ea quitte la party. &f%fpDisplay({_new})% &eest le nouveau chef.")
+                fpTell(player, "&eTu as quitte la party.")
+                stop
+
+            # Membre ordinaire qui quitte
+            set {_oldRaw} to fpPartyMembersRaw({_leader})
+            set {_othersCsv} to fpCsvRemove({_oldRaw}, {_self})
+            fpPartyRemoveMember({_leader}, {_self})
+            fpTell(player, "&eTu as quitte la party.")
+            if fpPartyMemberCount({_leader}) <= 1:
+                set {_remRaw} to fpPartyMembersRaw({_leader})
+                fpPartyDisband({_leader})
+                if {_remRaw} is not "":
+                    fpPartyBroadcastTo({_remRaw}, "&cLa party a ete dissoute (plus assez de membres).")
+            else:
+                fpPartyBroadcastTo({_othersCsv}, "&7%fpDisplay({_self})% &7a quitte la party.")
+            stop
+
+        if {_sub} is "kick":
+            set {_leader} to fpPartyLeaderOf({_self})
+            if {_leader} is "":
+                fpTell(player, "&cTu n'es pas dans une party.")
+                stop
+            if {_leader} is not {_self}:
+                fpTell(player, "&cSeul le chef peut expulser.")
+                stop
+
+            set {_targetRaw} to arg-2
+            if {_targetRaw} is not set:
+                fpTell(player, "&cUsage: /party kick <joueur>")
+                stop
+
+            set {_target} to fpNorm({_targetRaw})
+            if {_target} is {_self}:
+                fpTell(player, "&cUtilise /party leave pour dissoudre.")
+                stop
+
+            if fpPartyLeaderOf({_target}) is not {_self}:
+                fpTell(player, "&cCe joueur n'est pas dans ta party.")
+                stop
+
+            set {_oldRaw} to fpPartyMembersRaw({_self})
+            set {_othersCsv} to fpCsvRemove({_oldRaw}, {_target})
+            fpPartyRemoveMember({_self}, {_target})
+            fpTell(player, "&eJoueur expulse: &f%fpDisplay({_target})%&e.")
+            set {_tp} to fpPlayerByNorm({_target})
+            if {_tp} is set:
+                fpTell({_tp}, "&cTu as ete expulse de la party.")
+            if fpPartyMemberCount({_self}) <= 1:
+                set {_remRaw} to fpPartyMembersRaw({_self})
+                fpPartyDisband({_self})
+                if {_remRaw} is not "":
+                    fpPartyBroadcastTo({_remRaw}, "&cLa party a ete dissoute (plus assez de membres).")
+            else:
+                fpPartyBroadcastTo({_othersCsv}, "&7%fpDisplay({_target})% &7a ete expulse de la party.")
+            stop
+
+        if {_sub} is "disband":
+            set {_leader} to fpPartyLeaderOf({_self})
+            if {_leader} is "":
+                fpTell(player, "&cTu n'es pas dans une party.")
+                stop
+            if {_leader} is not {_self}:
+                fpTell(player, "&cSeul le chef peut dissoudre.")
+                stop
+
+            fpPartyBroadcast({_self}, "&cLa party a ete dissoute par &f%fpDisplay({_self})%&c.")
+            fpPartyDisband({_self})
+            fpTell(player, "&eParty dissoute.")
+            stop
+
+        if {_sub} is "promote":
+            set {_leader} to fpPartyLeaderOf({_self})
+            if {_leader} is "":
+                fpTell(player, "&cTu n'es pas dans une party.")
+                stop
+            if {_leader} is not {_self}:
+                fpTell(player, "&cSeul le chef peut transferer la direction.")
+                stop
+
+            set {_targetRaw} to arg-2
+            if {_targetRaw} is not set:
+                fpTell(player, "&cUsage: /party promote <joueur>")
+                stop
+
+            set {_target} to fpNorm({_targetRaw})
+            if {_target} is {_self}:
+                fpTell(player, "&cTu es deja le chef.")
+                stop
+            if fpPartyLeaderOf({_target}) is not {_self}:
+                fpTell(player, "&cCe joueur n'est pas dans ta party.")
+                stop
+
+            fpPartyTransferLeadership({_self}, {_target}, false)
+            fpPartyBroadcast({_target}, "&e%fpDisplay({_target})% &eest le nouveau chef de la party (transfere par &f%fpDisplay({_self})%&e).")
+            stop
+
+        if {_sub} is "tp":
+            set {_leader} to fpPartyLeaderOf({_self})
+            if {_leader} is "":
+                fpTell(player, "&cTu n'es pas dans une party.")
+                stop
+            if {_leader} is not {_self}:
+                fpTell(player, "&cSeul le chef peut utiliser /party tp.")
+                stop
+
+            set {_dest} to fpLocalServer()
+            fpPartyPullLocalMembers({_self}, {_dest}, true)
+            send redis message "ptpull|%{_self}%|%{_dest}%|1" to channel "{@fp_channel}"
+            fpTell(player, "&aTentative de regroupement de la party sur &f%{_dest}%&a.")
+            stop
+
+        if {_sub} is "list":
+            set {_leader} to fpPartyLeaderOf({_self})
+            if {_leader} is "":
+                fpTell(player, "&7Tu n'es pas dans une party.")
+                stop
+
+            set {_raw} to fpPartyMembersRaw({_leader})
+            if {_raw} is "":
+                fpTell(player, "&7Party vide.")
+                stop
+
+            set {_parts::*} to {_raw} split at ","
+            fpTell(player, "&bParty de &f%fpDisplay({_leader})% &8(&f%size of {_parts::*}% membres&8):")
+            loop {_parts::*}:
+                set {_n} to fpNorm(loop-value)
+                set {_server} to fpNetworkServer({_n})
+                if {_server} is "":
+                    send "&8- &f%fpDisplay({_n})% &8(&coffline&8)" to player
+                else:
+                    send "&8- &f%fpDisplay({_n})% &8(&a%{_server}%&8)" to player
+            stop
+
+        fpTell(player, "&7/party create|invite|accept|deny|leave|kick|disband|list|tp|promote")
+
+# Tab completion via SkBee natif: tab arg-N + set tab completions for position N
+
+# Helpers de remplissage : retournent rien, ils écrivent dans des listes locales
+# via une variable globale temporaire indexée sur l'UUID du joueur.
+
+function fpTabFillAddCandidates(viewer: player):
+    set {_id} to "%uuid of {_viewer}%"
+    set {_self} to fpNorm(name of {_viewer})
+    delete {fp.tab.out::%{_id}%::*}
+    loop {fp.net.prev.server::*}:
+        set {_n} to loop-index
+        if {_n} is not {_self}:
+            if fpAreFriends({_self}, {_n}) is false:
+                if fpNameIsVanished({_n}) is true:
+                    if fpCanSeeVanished({_viewer}) is true:
+                        add fpDisplay({_n}) to {fp.tab.out::%{_id}%::*}
+                else:
+                    add fpDisplay({_n}) to {fp.tab.out::%{_id}%::*}
+
+function fpTabFillFriendRequests(viewer: player):
+    set {_id} to "%uuid of {_viewer}%"
+    set {_self} to fpNorm(name of {_viewer})
+    delete {fp.tab.out::%{_id}%::*}
+    set {_reqRaw} to fpFriendReqRaw({_self})
+    if {_reqRaw} is not "":
+        set {_parts::*} to {_reqRaw} split at ","
+        loop {_parts::*}:
+            set {_n} to fpNorm(loop-value)
+            if {_n} is not "":
+                if fpNameIsVanished({_n}) is true:
+                    if fpCanSeeVanished({_viewer}) is true:
+                        add fpDisplay({_n}) to {fp.tab.out::%{_id}%::*}
+                else:
+                    add fpDisplay({_n}) to {fp.tab.out::%{_id}%::*}
+
+function fpTabFillFriendList(viewer: player):
+    set {_id} to "%uuid of {_viewer}%"
+    set {_self} to fpNorm(name of {_viewer})
+    delete {fp.tab.out::%{_id}%::*}
+    set {_fRaw} to fpFriendRaw({_self})
+    if {_fRaw} is not "":
+        set {_parts::*} to {_fRaw} split at ","
+        loop {_parts::*}:
+            set {_n} to fpNorm(loop-value)
+            if {_n} is not "":
+                if fpNameIsVanished({_n}) is true:
+                    if fpCanSeeVanished({_viewer}) is true:
+                        add fpDisplay({_n}) to {fp.tab.out::%{_id}%::*}
+                else:
+                    add fpDisplay({_n}) to {fp.tab.out::%{_id}%::*}
+
+function fpTabFillPartyInviteCandidates(viewer: player):
+    set {_id} to "%uuid of {_viewer}%"
+    set {_self} to fpNorm(name of {_viewer})
+    delete {fp.tab.out::%{_id}%::*}
+    loop {fp.net.prev.server::*}:
+        set {_n} to loop-index
+        if {_n} is not {_self}:
+            if fpPartyLeaderOf({_n}) is "":
+                if fpNameIsVanished({_n}) is true:
+                    if fpCanSeeVanished({_viewer}) is true:
+                        add fpDisplay({_n}) to {fp.tab.out::%{_id}%::*}
+                else:
+                    add fpDisplay({_n}) to {fp.tab.out::%{_id}%::*}
+
+function fpTabFillPartyInvitesIn(viewer: player):
+    set {_id} to "%uuid of {_viewer}%"
+    set {_self} to fpNorm(name of {_viewer})
+    delete {fp.tab.out::%{_id}%::*}
+    set {_invRaw} to fpPartyInvitesRaw({_self})
+    if {_invRaw} is not "":
+        set {_parts::*} to {_invRaw} split at ","
+        loop {_parts::*}:
+            set {_n} to fpNorm(loop-value)
+            if {_n} is not "":
+                add fpDisplay({_n}) to {fp.tab.out::%{_id}%::*}
+
+function fpTabFillPartyMembers(viewer: player):
+    set {_id} to "%uuid of {_viewer}%"
+    set {_self} to fpNorm(name of {_viewer})
+    delete {fp.tab.out::%{_id}%::*}
+    set {_leader} to fpPartyLeaderOf({_self})
+    if {_leader} is {_self}:
+        set {_mRaw} to fpPartyMembersRaw({_self})
+        if {_mRaw} is not "":
+            set {_parts::*} to {_mRaw} split at ","
+            loop {_parts::*}:
+                set {_n} to fpNorm(loop-value)
+                if {_n} is not {_self}:
+                    add fpDisplay({_n}) to {fp.tab.out::%{_id}%::*}
+
+# === FRIEND ===
+
+on tab complete of "/friend", "/friends", "/f":
+    set {_id} to "%uuid of player%"
+    # Position 1: sous-commandes
+    set tab completions for position 1 to "add", "accept", "deny", "remove", "requests", "list" and "notify"
+    # Position 2: liste de joueurs adaptée à la sous-commande
+    set {_sub} to tab arg-1
+    if {_sub} is "add":
+        fpTabFillAddCandidates(player)
+        set tab completions for position 2 to {fp.tab.out::%{_id}%::*}
+        delete {fp.tab.out::%{_id}%::*}
+    else if {_sub} is "accept":
+        fpTabFillFriendRequests(player)
+        set tab completions for position 2 to {fp.tab.out::%{_id}%::*}
+        delete {fp.tab.out::%{_id}%::*}
+    else if {_sub} is "deny":
+        fpTabFillFriendRequests(player)
+        set tab completions for position 2 to {fp.tab.out::%{_id}%::*}
+        delete {fp.tab.out::%{_id}%::*}
+    else if {_sub} is "remove":
+        fpTabFillFriendList(player)
+        set tab completions for position 2 to {fp.tab.out::%{_id}%::*}
+        delete {fp.tab.out::%{_id}%::*}
+    else if {_sub} is "notify":
+        set tab completions for position 2 to "connect", "disconnect", "move" and "all"
+    else:
+        set tab completions for position 2 to ""
+    # Position 3: on/off seulement pour notify
+    if {_sub} is "notify":
+        set tab completions for position 3 to "on" and "off"
+    else:
+        set tab completions for position 3 to ""
+
+# === PARTY ===
+
+on tab complete of "/party", "/p":
+    set {_id} to "%uuid of player%"
+    set tab completions for position 1 to "create", "invite", "accept", "deny", "leave", "kick", "promote", "disband", "list" and "tp"
+    set {_sub} to tab arg-1
+    if {_sub} is "invite":
+        fpTabFillPartyInviteCandidates(player)
+        set tab completions for position 2 to {fp.tab.out::%{_id}%::*}
+        delete {fp.tab.out::%{_id}%::*}
+    else if {_sub} is "accept":
+        fpTabFillPartyInvitesIn(player)
+        set tab completions for position 2 to {fp.tab.out::%{_id}%::*}
+        delete {fp.tab.out::%{_id}%::*}
+    else if {_sub} is "deny":
+        fpTabFillPartyInvitesIn(player)
+        set tab completions for position 2 to {fp.tab.out::%{_id}%::*}
+        delete {fp.tab.out::%{_id}%::*}
+    else if {_sub} is "kick":
+        fpTabFillPartyMembers(player)
+        set tab completions for position 2 to {fp.tab.out::%{_id}%::*}
+        delete {fp.tab.out::%{_id}%::*}
+    else if {_sub} is "promote":
+        fpTabFillPartyMembers(player)
+        set tab completions for position 2 to {fp.tab.out::%{_id}%::*}
+        delete {fp.tab.out::%{_id}%::*}
+    else:
+        set tab completions for position 2 to ""
+    set tab completions for position 3 to ""
