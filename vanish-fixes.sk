@@ -2,22 +2,20 @@
 #! Vanish No XP
 #!===============================================================================
 #! Empeche les joueurs en vanish (PremiumVanish) de ramasser l'XP au sol,
-#! sauf si leur option de pickup est active.
-#! Detection tipu: API PremiumVanish via skript-reflect (hasItemPickUpsEnabled)
-#! Fallback: Bukkit can pick up items puis PlaceholderAPI
-#! Event SkBee: "on player pickup experience"
+#! sauf si leur option de pickup (/v tipu) est active.
 #!
-#! PremiumVanish est un plugin premium et n'est pas forcement present (ex:
-#! image Docker de dev). Toutes les references a VanishAPI sont resolues
-#! dynamiquement via skript-reflect (javatype) et gardees par une verif
-#! `plugin "PremiumVanish" is enabled`, pour que ce script se charge sans
-#! erreur quand le plugin est absent.
+#! Detection vanish: placeholder PlaceholderAPI "premiumvanish_isvanished".
+#! Detection pickup: PremiumVanish bascule deja Player#setCanPickUpItems()
+#!   quand /v tipu change d'etat, donc on lit cet etat via Bukkit ("can pick
+#!   up items") avec un fallback PlaceholderAPI. Aucune dependance directe
+#!   a l'API Java de PremiumVanish (plugin premium, parfois absent ex.
+#!   image Docker dev) - le script se charge dans tous les cas.
+#! Event SkBee: "on player pickup experience"
 #!===============================================================================
 
 on player pickup experience:
     if vanishFixesIsVanished(event-player) is true:
-        set {_tipu} to vanishFixesCanPickupItems(event-player)
-        if {_tipu} is true:
+        if vanishFixesCanPickupItems(event-player) is true:
             stop
         cancel event
 
@@ -54,45 +52,13 @@ function vanishFixesIsVanished(target: player) :: boolean:
     return vanishFixesIsTruthy({_v})
 
 # True si le joueur peut ramasser des items (etat pickup actif).
+# PremiumVanish bascule deja Player#setCanPickUpItems() quand /v tipu change,
+# donc l'etat Bukkit suffit. Fallback PlaceholderAPI pour les cas exotiques.
 function vanishFixesCanPickupItems(target: player) :: boolean:
-    set {_api} to vanishFixesCanPickupItemsApi({_target})
-    if {_api} is true:
+    if {_target} can pick up items:
         return true
-
-    # Si l'API dit explicitement false, on respecte /v tipu OFF.
-    if {_api} is false:
-        return false
-
-    # Si l'API est indisponible, fallbacks.
-    if {_api} is not set:
-        # Fallback 1: etat Bukkit natif
-        if {_target} can pick up items:
-            return true
-
-        # Fallback 2: PlaceholderAPI joueur
-        set {_v} to placeholder "player_can_pickup_items" from {_target}
-        return vanishFixesIsTruthy({_v})
-
-    return false
-
-# True/false si l'API PremiumVanish est accessible, sinon value not set.
-function vanishFixesCanPickupItemsApi(target: player) :: object:
-    # Plugin absent (ex: image Docker dev) → on retourne "not set" pour
-    # laisser les fallbacks (Bukkit/PlaceholderAPI) prendre le relais.
-    if plugin "PremiumVanish" is not enabled:
-        return
-
-    # Resolution dynamique via skript-reflect: evite l'erreur de chargement
-    # quand la classe est absente du classpath.
-    set {_VanishAPI} to javatype("de.myzelyam.api.vanish.VanishAPI")
-    if {_VanishAPI} is not set:
-        return
-
-    set {_plugin} to {_VanishAPI}.getPlugin()
-    if {_plugin} is set:
-        set {_vp} to {_plugin}.getVanishPlayer({_target})
-        if {_vp} is set:
-            return {_vp}.hasItemPickUpsEnabled()
+    set {_v} to placeholder "player_can_pickup_items" from {_target}
+    return vanishFixesIsTruthy({_v})
 
 function vanishFixesIsCopperChest(b: block) :: boolean:
     set {_t} to uppercase "%type of {_b}%"
