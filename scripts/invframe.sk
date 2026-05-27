@@ -1,0 +1,182 @@
+import:
+    org.bukkit.entity.ItemFrame
+    org.bukkit.Bukkit
+    java.lang.Class
+
+# Si un frame invisible devient vide, le rendre a nouveau visible.
+function revealIfEmpty(frame: entity):
+    wait 1 tick
+    if {_frame} is not set:
+        stop
+    set {_item} to {_frame}.getItem()
+    if {_item} is air:
+        {_frame}.setVisible(true)
+        stop
+    if {_item} is not set:
+        {_frame}.setVisible(true)
+
+# Effet vanilla "wax on" (particules + son), centre sur le frame.
+function playInvframeWaxOn(frame: entity):
+    set {_l} to location of {_frame}
+    draw 7 of wax_on at {_l} with offset vector(0.2, 0.2, 0.2) with extra 0
+    play sound "item.honeycomb.wax_on" with volume 1 with pitch 1 at {_l}
+
+# Effet vanilla "wax off" (particules + son), centre sur le frame.
+function playInvframeWaxOff(frame: entity):
+    set {_l} to location of {_frame}
+    draw 7 of wax_off at {_l} with offset vector(0.2, 0.2, 0.2) with extra 0
+    play sound "item.axe.wax_off" with volume 1 with pitch 1 at {_l}
+
+# Retire 1 unite du tool du joueur (gere stack et vide).
+function invframeConsumeOneFromTool(p: player):
+    set {_n} to amount of {_p}'s tool
+    if {_n} > 1:
+        set amount of {_p}'s tool to {_n} - 1
+    else:
+        set {_p}'s tool to air
+
+# Etat "waxe" stocke directement dans le NBT du frame (Tags / scoreboard tags),
+# ce qui persiste aux restarts et reste inspectable avec /tag.
+options:
+    invframe-admin-bypass-permission: invframe.toggle.bypass
+    invframe-wax-tag: xeinoria_invframe_waxed
+
+# True si le joueur peut modifier le frame.
+# Si PlotSquared n'est pas present sur le serveur, on laisse passer.
+function invframeCanModify(target: player, frame: entity) :: boolean:
+    if {_target} is op:
+        return true
+    if {_target} has permission "{@invframe-admin-bypass-permission}":
+        return true
+    if {_target} has permission "plotsquared.admin":
+        return true
+
+    set {_plotSquared} to Bukkit.getPluginManager().getPlugin("PlotSquared")
+    if {_plotSquared} is not set:
+        return true
+
+    set {_bukkitUtilClass} to Class.forName("com.plotsquared.bukkit.util.BukkitUtil")
+    set {_adaptMethod} to {_bukkitUtilClass}.getMethod("adaptComplete", {_frame}.getLocation().getClass())
+    set {_plotLoc} to {_adaptMethod}.invoke(null, {_frame}.getLocation())
+    if {_plotLoc} is not set:
+        return true
+
+    set {_plotClass} to Class.forName("com.plotsquared.core.plot.Plot")
+    set {_getPlotMethod} to {_plotClass}.getMethod("getPlot", {_plotLoc}.getClass())
+    set {_plot} to {_getPlotMethod}.invoke(null, {_plotLoc})
+    if {_plot} is not set:
+        return true
+    if {_plot}.hasOwner() is false:
+        return true
+    if {_plot}.isOwner(uuid of {_target}) is true:
+        return true
+    if {_plot}.isAdded(uuid of {_target}) is true:
+        return true
+    return false
+
+function invframeIsWaxed(frame: entity) :: boolean:
+    if scoreboard tags of {_frame} contains "{@invframe-wax-tag}":
+        return true
+    return false
+
+function invframeSetWaxed(frame: entity):
+    add "{@invframe-wax-tag}" to scoreboard tags of {_frame}
+
+function invframeUnsetWaxed(frame: entity):
+    remove "{@invframe-wax-tag}" from scoreboard tags of {_frame}
+
+on right click on item frame or glow item frame:
+    set {_frame} to event-entity
+    set {_item} to {_frame}.getItem()
+    set {_tool} to player's tool
+
+    if player is sneaking:
+        if player does not have permission "invframe.toggle":
+            stop
+
+        if invframeCanModify(player, {_frame}) is not true:
+            cancel event
+            send action bar "&6[&e!&6] &cTu ne peux pas modifier cet item frame ici" to player
+            stop
+
+        cancel event
+
+        if difference between now and {cooldown::%uuid of player%} < 0.1 second:
+            stop
+        set {cooldown::%uuid of player%} to now
+
+        # Frame waxe -> on bloque tout changement d'etat.
+        if invframeIsWaxed({_frame}) is true:
+            send action bar "&6[&e!&6] &cFrame waxe: utilise une hache pour le dewaxer" to player
+            stop
+
+        set {_visible} to {_frame}.isVisible()
+
+        if {_visible} is false:
+            # actuellement invisible -> on remet visible
+            {_frame}.setVisible(true)
+            send action bar "&6[&e!&6] &7Item frame is now &avisible" to player
+        else:
+            # actuellement visible -> on tente de cacher (seulement si item present)
+            if {_item} is air:
+                send action bar "&6[&e!&6] &cFrame vide: met un item avant de le rendre invisible" to player
+                stop
+            {_frame}.setVisible(false)
+            send action bar "&6[&e!&6] &7Item frame is now &cinvisible" to player
+
+        # Si l'interaction a vide un frame invisible, on le remet visible.
+        revealIfEmpty(event-entity)
+        stop
+
+    # ----- Waxable feature (sans sneak) -----
+
+    # WAX: clic droit avec honeycomb sur un frame contenant un item.
+    if type of {_tool} is honeycomb:
+        if {_item} is not air:
+            if invframeCanModify(player, {_frame}) is not true:
+                cancel event
+                send action bar "&6[&e!&6] &cTu ne peux pas modifier cet item frame ici" to player
+                stop
+            cancel event
+            if invframeIsWaxed({_frame}) is true:
+                send action bar "&6[&e!&6] &cCet item frame est deja waxe" to player
+                stop
+            invframeSetWaxed({_frame})
+            playInvframeWaxOn({_frame})
+            if player's gamemode is not creative:
+                invframeConsumeOneFromTool(player)
+            send action bar "&6[&e!&6] &eItem frame &6waxe &7(rotation bloquee)" to player
+            stop
+
+    # UNWAX: clic droit avec une hache sur un frame waxe.
+    if type of {_tool} is wooden axe, stone axe, iron axe, golden axe, diamond axe or netherite axe:
+        if invframeIsWaxed({_frame}) is true:
+            if invframeCanModify(player, {_frame}) is not true:
+                cancel event
+                send action bar "&6[&e!&6] &cTu ne peux pas modifier cet item frame ici" to player
+                stop
+            cancel event
+            invframeUnsetWaxed({_frame})
+            playInvframeWaxOff({_frame})
+            if player's gamemode is not creative:
+                set damage value of player's tool to (damage value of player's tool) + 1
+            send action bar "&6[&e!&6] &7Item frame &edewaxe &7(rotation autorisee)" to player
+            stop
+
+    # Frame waxe sans hache -> on bloque la rotation.
+    if invframeIsWaxed({_frame}) is true:
+        cancel event
+        send action bar "&6[&e!&6] &cFrame waxe: utilise une hache pour le dewaxer" to player
+        stop
+
+    # Si l'interaction a vide un frame invisible, on le remet visible.
+    revealIfEmpty(event-entity)
+
+on damage of item frame or glow item frame:
+    # Frame waxe -> impossible de retirer l'item ou de casser le frame.
+    if invframeIsWaxed(victim) is true:
+        cancel event
+        if attacker is a player:
+            send action bar "&6[&e!&6] &cFrame waxe: utilise une hache pour le dewaxer" to attacker
+        stop
+    revealIfEmpty(victim)

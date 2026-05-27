@@ -1,0 +1,225 @@
+# =========================================================
+# Translation System
+# Utilise l'addon Skript-Translate pour traduire les messages
+# =========================================================
+
+options:
+    prefix: &6[Traduction] &r
+    perm_translate: translate.use
+    translate_channel: staff:translate
+
+function normalizeLangCode(raw: text) :: text:
+    set {_v} to lowercase {_raw}
+
+    if {_v} is "english":
+        return "en"
+    if {_v} is "french":
+        return "fr"
+    if {_v} is "spanish":
+        return "es"
+    if {_v} is "german":
+        return "de"
+    if {_v} is "italian":
+        return "it"
+    if {_v} is "portuguese":
+        return "pt"
+    if {_v} is "russian":
+        return "ru"
+    if {_v} is "japanese":
+        return "ja"
+    if {_v} is "korean":
+        return "ko"
+    if {_v} is "chinese":
+        return "zh"
+    if {_v} is "arabic":
+        return "ar"
+    if {_v} is "hindi":
+        return "hi"
+    if {_v} is "dutch":
+        return "nl"
+    if {_v} is "swedish":
+        return "sv"
+    if {_v} is "norwegian":
+        return "no"
+    if {_v} is "danish":
+        return "da"
+    if {_v} is "finnish":
+        return "fi"
+    if {_v} is "polish":
+        return "pl"
+    if {_v} is "turkish":
+        return "tr"
+    if {_v} is "greek":
+        return "el"
+    if {_v} is "czech":
+        return "cs"
+    if {_v} is "hungarian":
+        return "hu"
+    if {_v} is "romanian":
+        return "ro"
+    if {_v} is "thai":
+        return "th"
+    if {_v} is "vietnamese":
+        return "vi"
+    if {_v} is "hebrew":
+        return "he"
+    if {_v} is "indonesian":
+        return "id"
+    if {_v} is "tagalog":
+        return "tl"
+    if {_v} is "ukrainian":
+        return "uk"
+
+    return {_v}
+
+# =========================================================
+# REDIS HELPERS (local + fallback)
+# =========================================================
+
+function setTranslateLocal(uuid: text, source: text, target: text, state: boolean):
+    if {_state} is true:
+        set {translate::source::%{_uuid}%} to {_source}
+        set {translate::target::%{_uuid}%} to {_target}
+        set {translate::enabled::%{_uuid}%} to true
+    else:
+        delete {translate::enabled::%{_uuid}%}
+        delete {translate::source::%{_uuid}%}
+        delete {translate::target::%{_uuid}%}
+
+function broadcastTranslate(uuid: text, source: text, target: text, state: boolean):
+    if {_state} is true:
+        send redis message "%{_uuid}%|%{_source}%|%{_target}%|1" to channel "{@translate_channel}"
+    else:
+        send redis message "%{_uuid}%|%{_source}%|%{_target}%|0" to channel "{@translate_channel}"
+
+# =========================================================
+# VARIABLES & CONFIGURATION
+# =========================================================
+
+# {translate::enabled::%uuid%} = true/false (activation traduction)
+# {translate::source::%uuid%} = langue source (ex: "en", "fr")
+# {translate::target::%uuid%} = langue cible (ex: "es", "de")
+
+# =========================================================
+# COMMANDE /translate
+# =========================================================
+
+command /translate [<text>] [<text>] [<text>]:
+    aliases: /trad, /tr
+    permission: {@perm_translate}
+    trigger:
+        if arg-1 is not set:
+            if {translate::enabled::%uuid of player%} is true:
+                set {_source} to {translate::source::%uuid of player%}
+                set {_target} to {translate::target::%uuid of player%}
+                send "{@prefix}&aTraduction: &b%{_source}% → %{_target}%&a. Tapez &e/translate off&a pour désactiver."
+            else:
+                send "{@prefix}&cTraduction désactivée. Syntaxe: &e/translate <lang_source> to <lang_cible>"
+            send "{@prefix}&7Exemple: &e/translate fr to es"
+            send "{@prefix}&7Codes: en, fr, es, de, it, pt, ru, ja, ko, zh, ar, hi, nl, sv, no, da, fi, pl, tr, el, cs, hu, ro, th, vi, he, id, tl, uk"
+            stop
+
+        if arg-1 is "off":
+            set {_uuid} to uuid of player
+            setTranslateLocal({_uuid}, "", "", false)
+            broadcastTranslate({_uuid}, "", "", false)
+            send "{@prefix}&cTraduction désactivée."
+            stop
+        if arg-1 is "disable":
+            set {_uuid} to uuid of player
+            setTranslateLocal({_uuid}, "", "", false)
+            broadcastTranslate({_uuid}, "", "", false)
+            send "{@prefix}&cTraduction désactivée."
+            stop
+
+        if arg-2 is "to":
+            set {_source} to normalizeLangCode(arg-1)
+            set {_target} to normalizeLangCode(arg-3)
+
+            if language from code {_source} is not set:
+                send "{@prefix}&cLangue source invalide: &f%arg-1%"
+                stop
+            if language from code {_target} is not set:
+                send "{@prefix}&cLangue cible invalide: &f%arg-3%"
+                stop
+            
+            set {_uuid} to uuid of player
+            setTranslateLocal({_uuid}, {_source}, {_target}, true)
+            broadcastTranslate({_uuid}, {_source}, {_target}, true)
+            
+            send "{@prefix}&aTraduction activée: &b%{_source}% → %{_target}%"
+            send "{@prefix}&7Les messages reçus des autres seront traduits."
+            send "{@prefix}&7Tapez &e/translate off&7 pour désactiver."
+            stop
+
+        send "{@prefix}&cSyntaxe invalide. Utilisez: &e/translate <lang_source> to <lang_cible>"
+
+# =========================================================
+# EVENT: Chat Message Interception & Translation
+# =========================================================
+
+on chat with priority highest:
+    set {_sender} to player
+    set {_original_msg} to message
+
+    # Si l'auteur a la traduction active, on remplace entièrement son message de chat
+    if {translate::enabled::%uuid of player%} is true:
+        set {_sender_source} to {translate::source::%uuid of player%}
+        set {_sender_target} to {translate::target::%uuid of player%}
+        if {_sender_source} is set:
+            if {_sender_target} is set:
+                cancel event
+                set {_sender_msg::*} to message
+                translate {_sender_msg::*} from language from code {_sender_source} to language from code {_sender_target}
+                if {_sender_msg::1} is set:
+                    set {_translated_sender_msg} to {_sender_msg::1}
+                    loop all players:
+                        send "%prefix of {_sender}%%name of {_sender}%&r: %{_translated_sender_msg}%" to loop-player
+                    stop
+
+    loop all players:
+        if loop-player is not {_sender}:
+            if {translate::enabled::%uuid of loop-player%} is true:
+                set {_source_lang} to {translate::source::%uuid of loop-player%}
+                set {_target_lang} to {translate::target::%uuid of loop-player%}
+
+                if {_source_lang} is set:
+                    if {_target_lang} is set:
+                        set {_msg_array::*} to {_original_msg}
+                        translate {_msg_array::*} from language from code {_source_lang} to language from code {_target_lang}
+                        set {_translated_msg} to {_msg_array::1}
+
+                        if {_translated_msg} is not set:
+                            set {_translated_msg} to {_original_msg}
+
+                        send "%prefix of {_sender}%%name of {_sender}%&r: %{_translated_msg}%" to loop-player
+
+# =========================================================
+# REDIS RECEIVE (cross-server sync)
+# message format: "uuid|source|target|state"
+# =========================================================
+
+on redis message:
+    if redis channel is "{@translate_channel}":
+        set {_parts::*} to split redis message at "|"
+        set {_uuid} to {_parts::1}
+        set {_source} to {_parts::2}
+        set {_target} to {_parts::3}
+        set {_state} to {_parts::4}
+        
+        if {_uuid} is not set:
+            stop
+        
+        if {_state} is "1":
+            setTranslateLocal({_uuid}, {_source}, {_target}, true)
+        else:
+            setTranslateLocal({_uuid}, {_source}, {_target}, false)
+
+# =========================================================
+# TAB COMPLETE
+# =========================================================
+
+on tab complete of "/translate":
+    set tab completions for position 1 to "en", "fr", "es", "de", "it", "pt", "ru", "ja", "ko", "zh", "ar", "hi", "nl", "sv", "no", "da", "fi", "pl", "tr", "el", "cs", "hu", "ro", "th", "vi", "he", "id", "tl", "uk", "to", "off", "disable"
+    set tab completions for position 2 to "to", "en", "fr", "es", "de", "it", "pt", "ru", "ja", "ko", "zh", "ar", "hi", "nl", "sv", "no", "da", "fi", "pl", "tr", "el", "cs", "hu", "ro", "th", "vi", "he", "id", "tl", "uk"
+    set tab completions for position 3 to "en", "fr", "es", "de", "it", "pt", "ru", "ja", "ko", "zh", "ar", "hi", "nl", "sv", "no", "da", "fi", "pl", "tr", "el", "cs", "hu", "ro", "th", "vi", "he", "id", "tl", "uk"

@@ -1,0 +1,211 @@
+options:
+    ac_prefix: &c[Anticheat] &r
+
+    # Combien de temps on ignore toute nouvelle detection apres une action (lecture du message).
+    ac_cooldown: 1 minute
+
+    # Apres ce delai sans activite, on reset le compteur de cycles du joueur.
+    ac_reset_window: 10 minutes
+
+    # Duree du tempban applique au 3e cycle.
+    ac_ban_duration: 15d
+
+    # Throttle d'affichage du message pendant la periode d'ignore (anti-spam de title).
+    ac_display_throttle: 10 seconds
+
+    # Delai d'affichage du message avant d'executer une sanction lourde (kick/ban),
+    # le temps que le joueur puisse lire le chat / voir le title.
+    ac_pre_sanction_delay: 3 seconds
+
+    # Separateur visuel autour du message in-game.
+    ac_sep: &8&m                                              &8&r
+
+# ============================================================
+#  Etat du joueur (cooldown / cycle / dernier affichage)
+#  NOTE: toute lecture/ecriture d'etat passe par cette section
+#  pour faciliter une future migration Redis (skRedis) network-wide.
+# ============================================================
+
+function acguardCleanupIfExpired(target: text):
+    if {acguard::lastActionAt::%{_target}%} is set:
+        if difference between now and {acguard::lastActionAt::%{_target}%} > {@ac_reset_window}:
+            delete {acguard::warningCycle::%{_target}%}
+            delete {acguard::hasBeenKicked::%{_target}%}
+            delete {acguard::lastActionAt::%{_target}%}
+            delete {acguard::lastDisplayAt::%{_target}%}
+
+function acguardInCooldown(target: text) :: boolean:
+    if {acguard::lastActionAt::%{_target}%} is set:
+        if difference between now and {acguard::lastActionAt::%{_target}%} <= {@ac_cooldown}:
+            return true
+    return false
+
+function acguardNextCycle(target: text) :: number:
+    if {acguard::warningCycle::%{_target}%} is not set:
+        set {acguard::warningCycle::%{_target}%} to 0
+    add 1 to {acguard::warningCycle::%{_target}%}
+    set {acguard::lastActionAt::%{_target}%} to now
+    return {acguard::warningCycle::%{_target}%}
+
+function acguardResetCycle(target: text):
+    delete {acguard::warningCycle::%{_target}%}
+    delete {acguard::lastDisplayAt::%{_target}%}
+    set {acguard::lastActionAt::%{_target}%} to now
+
+function acguardCanDisplay(target: text) :: boolean:
+    if {acguard::lastDisplayAt::%{_target}%} is set:
+        if difference between now and {acguard::lastDisplayAt::%{_target}%} < {@ac_display_throttle}:
+            return false
+    return true
+
+function acguardMarkDisplayed(target: text):
+    set {acguard::lastDisplayAt::%{_target}%} to now
+
+function acguardIsUnreliableCheck(check: text) :: boolean:
+    set {_normalized} to lowercase {_check}
+    if {_normalized} contains "improbable":
+        return true
+    if {_normalized} contains "invalid":
+        return true
+    return false
+
+# ============================================================
+#  Actions sur le joueur
+# ============================================================
+
+function acguardShowWarning(p: player):
+    send title "&c&lTriche ?" with subtitle "&6Regardez votre chat" to {_p} for 10 ticks, 60 ticks and 10 ticks
+    send "" to {_p}
+    send "{@ac_sep}" to {_p}
+    send "&c&lTriche ?" to {_p}
+    send "&7Notre systeme a detecte un comportement inhabituel sur votre compte." to {_p}
+    send "&7Aucune sanction n'est appliquee pour le moment." to {_p}
+    send "&7Merci de verifier votre client et de desactiver tout outil non conforme." to {_p}
+    send "" to {_p}
+    send "&8&oSi vous pensez qu'il s'agit d'une erreur, ignorez ce message." to {_p}
+    send "{@ac_sep}" to {_p}
+
+# Affichage "safe": throttle pour eviter le spam si Vulcan re-flag pendant l'ignore.
+# Ne touche PAS au timer de cooldown ni au compteur de cycle.
+function acguardDisplayThrottled(target: text):
+    if acguardCanDisplay({_target}) is true:
+        set {_p} to {_target} parsed as player
+        if {_p} is set:
+            acguardShowWarning({_p})
+            acguardMarkDisplayed({_target})
+            send "{@ac_prefix}&e[DISPLAY] &7%{_target}% &8(cooldown re-display)" to console
+
+function acguardWarnLitebans(target: text, check: text, type: text):
+    execute console command "litebans:warn %{_target}% [Anticheat] %{_check}% (Type %{_type}%)"
+
+function acguardKickPlayer(target: text):
+    execute console command "litebans:kick %{_target}% [Anticheat] Unfair Advantage"
+
+function acguardTempBan(target: text):
+    execute console command "litebans:tempban %{_target}% {@ac_ban_duration} [Anticheat] Unfair Advantage"
+
+# Sanction "lourde": on raffiche le message au joueur, on attend un court instant
+# qu'il puisse le lire, puis on applique le kick.
+function acguardEnforceKick(target: text, check: text, type: text):
+    acguardWarnLitebans({_target}, {_check}, {_type})
+    set {_p} to {_target} parsed as player
+    if {_p} is set:
+        acguardShowWarning({_p})
+        acguardMarkDisplayed({_target})
+        send "{@ac_prefix}&e[DISPLAY] &7%{_target}% &8(before kick)" to console
+        wait {@ac_pre_sanction_delay}
+    acguardKickPlayer({_target})
+    acguardResetCycle({_target})
+
+function acguardEnforceTempBan(target: text, check: text, type: text):
+    acguardWarnLitebans({_target}, {_check}, {_type})
+    set {_p} to {_target} parsed as player
+    if {_p} is set:
+        acguardShowWarning({_p})
+        acguardMarkDisplayed({_target})
+        send "{@ac_prefix}&e[DISPLAY] &7%{_target}% &8(before tempban)" to console
+        wait {@ac_pre_sanction_delay}
+    acguardTempBan({_target})
+    delete {acguard::hasBeenKicked::%{_target}%}
+    acguardResetCycle({_target})
+
+function acguardLogConsole(target: text, check: text, type: text, action: text):
+    send "{@ac_prefix}&e[%{_action}%] &7%{_target}% &8(check: %{_check}%, type: %{_type}%)" to console
+
+# ============================================================
+#  Entree principale
+#  Appelee par Vulcan via punishment-commands:
+#  /acguard <player> <check words...> type=<type>
+# ============================================================
+
+command /acguard [<text>] [<text>] [<text>] [<text>] [<text>] [<text>] [<text>] [<text>]:
+    permission: console
+    trigger:
+        if arg-1 is not set:
+            send "{@ac_prefix}&cUsage: /acguard <player> <check...> type=<x>"
+            stop
+
+        set {_target} to arg-1
+
+        # Parsing inline: extraire type=... et reconstruire le nom du check.
+        set {_type} to "?"
+        delete {_checkParts::*}
+
+        set {_tokens::1} to arg-2
+        set {_tokens::2} to arg-3
+        set {_tokens::3} to arg-4
+        set {_tokens::4} to arg-5
+        set {_tokens::5} to arg-6
+        set {_tokens::6} to arg-7
+        set {_tokens::7} to arg-8
+
+        loop {_tokens::*}:
+            if loop-value is set:
+                set {_tokenLower} to lowercase loop-value
+                if {_tokenLower} starts with "type=":
+                    set {_split::*} to split loop-value at "="
+                    if {_split::2} is set:
+                        set {_type} to {_split::2}
+                else if {_tokenLower} starts with "vl=":
+                    set {_ignored} to true
+                else:
+                    add loop-value to {_checkParts::*}
+
+        if {_checkParts::*} is set:
+            set {_check} to join {_checkParts::*} with " "
+        else:
+            set {_check} to "Comportement suspect"
+
+        acguardCleanupIfExpired({_target})
+
+        # Pendant la fenetre d'ignore, on re-affiche le message (throttle) mais
+        # on ne reset PAS le timer et on n'incremente PAS le cycle.
+        if acguardInCooldown({_target}) is true:
+            acguardDisplayThrottled({_target})
+            stop
+
+        set {_cycle} to acguardNextCycle({_target})
+
+        if {_cycle} <= 1:
+            set {_p} to {_target} parsed as player
+            if {_p} is set:
+                acguardShowWarning({_p})
+                acguardMarkDisplayed({_target})
+                send "{@ac_prefix}&e[DISPLAY] &7%{_target}% &8(initial warning)" to console
+            acguardLogConsole({_target}, {_check}, {_type}, "PREVENTION")
+            stop
+
+        if acguardIsUnreliableCheck({_check}) is true:
+            acguardEnforceKick({_target}, {_check}, {_type})
+            acguardLogConsole({_target}, {_check}, {_type}, "KICK+WARN (UNRELIABLE)")
+            stop
+
+        if {acguard::hasBeenKicked::%{_target}%} is true:
+            acguardEnforceTempBan({_target}, {_check}, {_type})
+            acguardLogConsole({_target}, {_check}, {_type}, "TEMPBAN {@ac_ban_duration}")
+            stop
+
+        # Premiere sanction fiable -> kick, puis tempban possible si recidive apres retour.
+        set {acguard::hasBeenKicked::%{_target}%} to true
+        acguardEnforceKick({_target}, {_check}, {_type})
+        acguardLogConsole({_target}, {_check}, {_type}, "KICK+WARN")

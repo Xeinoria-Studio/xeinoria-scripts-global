@@ -1,0 +1,15 @@
+on damage of player:
+	attacker is holding stick named "&aPush Stick"
+	victim is a player
+	distance between attacker and victim is less than 5
+	#gamemode of attacker is creative
+	#gamemode of victim is not creative
+	push victim upwards at speed 0.5
+	push victim in direction of attacker at speed (1.2*15)
+	
+	
+command /stickpush [<text=give>]:
+	permission: admin
+	trigger:
+		if arg-1 is "give":
+			give player 1 stick of unbreaking named "&aPush Stick" with lore "&7Right click to push players upwards."

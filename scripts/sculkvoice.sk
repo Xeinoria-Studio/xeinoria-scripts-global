@@ -1,0 +1,257 @@
+#!===============================================================================
+#! Sculk Voice (Skript port de SculkVoicePlugin)
+#!===============================================================================
+#! Auteur: Shamallow_
+#! Description:
+#!   Recree le comportement du plugin SculkVoicePlugin via skript-reflect:
+#!   les paquets micro de Simple Voice Chat sont decodes (Opus -> PCM),
+#!   on calcule l'amplitude moyenne et on declenche un GameEvent au sol
+#!   du joueur, ce qui active les sculk sensors a proximite.
+#!
+#! Requis:
+#!   - Skript
+#!   - skript-reflect
+#!   - voicechat-bukkit (Simple Voice Chat)
+#!===============================================================================
+
+import:
+    de.maxhenkel.voicechat.plugins.PluginManager
+    de.maxhenkel.voicechat.plugins.impl.VoicechatServerApiImpl
+    java.util.function.Consumer
+    java.util.ArrayList
+    java.util.concurrent.ConcurrentHashMap
+    java.lang.Class
+    java.lang.reflect.Array
+    java.util.UUID
+    org.bukkit.Bukkit
+    org.bukkit.GameEvent
+
+options:
+    # Seuil pour les vibrations faibles (~ palier d'activation)
+    weak-threshold: 400
+    # Seuil pour les vibrations fortes (declenchement plus marque)
+    strong-threshold: 1500
+    # Cooldown par joueur (ms) entre deux vibrations
+    cooldown-ms: 1000
+    # Reduction de volume si chuchotement
+    whisper-factor: 0.8
+    # Attenuation quand le joueur est accroupi (<1 = moins sensible)
+    # Permet de parler plus librement en sneak sans declencher les sculk sensors
+    sneak-factor: 0.25
+    # Pas d'echantillonnage du PCM (32 = on prend 1 sample sur 32 -> tres rapide)
+    sample-step: 32
+
+# ============================================================================
+#  Installation / desinstallation du listener
+# ============================================================================
+
+on script load:
+    delete {sculk-voice::queue::*}
+    delete {sculk-voice::cooldown::*}
+    set {sculk-voice::decoders} to new ConcurrentHashMap()
+
+    # 1) Construction d'un Consumer<MicrophonePacketEvent> via proxy
+    create section with {_proxy}, {_event} stored in {_impl::accept}:
+        sculkVoiceHandlePacket({_event})
+
+    set {_consumer} to new proxy instance of Consumer using {_impl::*}
+
+    # 2) Recuperation du PluginManager interne de SVC
+    set {_pm} to PluginManager.instance()
+    if {_pm} is not set:
+        broadcast "&c[SculkVoice] PluginManager Simple Voice Chat introuvable."
+        stop
+
+    # 3) Acces reflexion au champ prive 'events'
+    set {_field} to {_pm}.getClass().getDeclaredField("events")
+    {_field}.setAccessible(true)
+    set {_eventsMap} to {_field}.get({_pm})
+
+    set {_micEventClass} to Class.forName("de.maxhenkel.voicechat.api.events.MicrophonePacketEvent")
+
+    # 4) Injection de notre Consumer dans la liste des consumers de l'event
+    set {_list} to {_eventsMap}.get({_micEventClass})
+    if {_list} is not set:
+        set {_list} to new ArrayList()
+        {_eventsMap}.put({_micEventClass}, {_list})
+    {_list}.add({_consumer})
+
+    set {sculk-voice::consumer} to {_consumer}
+    send "&a[SculkVoice] Listener voix -> sculk installe." to console
+
+on script unload:
+    set {_pm} to PluginManager.instance()
+    if {_pm} is set:
+        set {_field} to {_pm}.getClass().getDeclaredField("events")
+        {_field}.setAccessible(true)
+        set {_eventsMap} to {_field}.get({_pm})
+        set {_micEventClass} to Class.forName("de.maxhenkel.voicechat.api.events.MicrophonePacketEvent")
+        set {_list} to {_eventsMap}.get({_micEventClass})
+        if {_list} is set:
+            if {sculk-voice::consumer} is set:
+                {_list}.remove({sculk-voice::consumer})
+    delete {sculk-voice::consumer}
+    delete {sculk-voice::queue::*}
+    delete {sculk-voice::cooldown::*}
+    delete {sculk-voice::decoders}
+
+# ============================================================================
+#  Handler du paquet voix (appele depuis le thread reseau de SVC)
+# ============================================================================
+
+function sculkVoiceHandlePacket(event: object):
+    set {_packet} to {_event}.getPacket()
+    if {_packet} is not set:
+        stop
+    set {_senderConn} to {_event}.getSenderConnection()
+    if {_senderConn} is not set:
+        stop
+    set {_serverPlayer} to {_senderConn}.getPlayer()
+    if {_serverPlayer} is not set:
+        stop
+    set {_player} to {_serverPlayer}.getPlayer()
+    if {_player} is not set:
+        stop
+
+    set {_uuidStr} to "%{_player}.getUniqueId()%"
+
+    # Cooldown
+    if {sculk-voice::cooldown::%{_uuidStr}%} is set:
+        if difference between now and {sculk-voice::cooldown::%{_uuidStr}%} is less than {@cooldown-ms} milliseconds:
+            stop
+
+    # Decodeur Opus par joueur (cache dans une ConcurrentHashMap Java)
+    set {_api} to VoicechatServerApiImpl.instance()
+    if {_api} is not set:
+        stop
+    set {_decoders} to {sculk-voice::decoders}
+    if {_decoders} is not set:
+        stop
+    set {_decoder} to {_decoders}.get({_uuidStr})
+    if {_decoder} is not set:
+        set {_decoder} to {_api}.createDecoder()
+        {_decoders}.put({_uuidStr}, {_decoder})
+
+    set {_opus} to {_packet}.getOpusEncodedData()
+    if {_opus} is not set:
+        stop
+
+    set {_pcm} to {_decoder}.decode({_opus})
+    if {_pcm} is not set:
+        stop
+    set {_avg} to sculkVoiceComputeAmplitude({_pcm})
+    if {_avg} < 0:
+        stop
+
+    # Modificateur chuchotement (attenue)
+    if {_packet}.isWhispering() is true:
+        set {_avg} to {_avg} * {@whisper-factor}
+
+    # Sneak: on attenue l'amplitude pour permettre de parler librement sans declencher
+    if {_player} is sneaking:
+        set {_avg} to {_avg} * {@sneak-factor}
+
+    set {_strength} to sculkVoiceClassify({_avg})
+    if {_strength} is "none":
+        stop
+
+    set {sculk-voice::cooldown::%{_uuidStr}%} to now
+    add "%{_uuidStr}%|%{_strength}%" to {sculk-voice::queue::*}
+
+# Calcul de l'amplitude moyenne du PCM (sous-echantillonne).
+# Retourne -1 si tableau vide.
+function sculkVoiceComputeAmplitude(pcm: object) :: number:
+    set {_len} to Array.getLength({_pcm})
+    if {_len} <= 0:
+        return -1
+    set {_step} to {@sample-step}
+    set {_count} to 0
+    set {_sum} to 0
+    set {_i} to 0
+    while {_i} < {_len}:
+        set {_v} to Array.get({_pcm}, {_i})
+        set {_n} to {_v}.shortValue()
+        if {_n} < 0:
+            set {_n} to 0 - {_n}
+        set {_sum} to {_sum} + {_n}
+        set {_count} to {_count} + 1
+        set {_i} to {_i} + {_step}
+    if {_count} <= 0:
+        return -1
+    return {_sum} / {_count}
+
+# Classifie une amplitude en "none" / "weak" / "strong".
+function sculkVoiceClassify(amp: number) :: text:
+    if {_amp} >= {@strong-threshold}:
+        return "strong"
+    if {_amp} >= {@weak-threshold}:
+        return "weak"
+    return "none"
+
+# ============================================================================
+#  Drain de la file -> declenchement des GameEvent (main thread)
+# ============================================================================
+
+every 1 tick:
+    {sculk-voice::queue::*} is set
+    loop {sculk-voice::queue::*}:
+        set {_data::*} to loop-value split at "|"
+        set {_uuidStr} to {_data::1}
+        set {_strength} to {_data::2}
+        set {_uuid} to UUID.fromString({_uuidStr})
+        set {_p} to Bukkit.getPlayer({_uuid})
+        if {_p} is set:
+            sculkVoiceTrigger({_p}, {_strength})
+    delete {sculk-voice::queue::*}
+
+function sculkVoiceTrigger(p: player, strength: text):
+    {_p} is online
+    set {_loc} to location of {_p}
+    set {_vec} to {_loc}.toVector()
+    set {_event} to sculkVoiceGameEventFor({_strength})
+    # Si le joueur sneak, Minecraft filtre les vibrations emises par l'entite.
+    # On passe alors une source nulle pour bypasser ce filtre vanilla.
+    set {_source} to {_p}
+    if {_p} is sneaking:
+        set {_source} to null
+    (world of {_loc}).sendGameEvent({_source}, {_event}, {_vec})
+
+# Mappe "strong"/"weak" vers le GameEvent correspondant.
+function sculkVoiceGameEventFor(strength: text) :: object:
+    if {_strength} is "strong":
+        return GameEvent.HIT_GROUND
+    return GameEvent.STEP
+
+# ============================================================================
+#  Commande admin pour debug / reload
+# ============================================================================
+
+command /sculkvoice <text="status">:
+    permission: skript.admin
+    permission message: &cAcces refuse.
+    trigger:
+        if arg-1 is "status":
+            set {_dn} to 0
+            if {sculk-voice::decoders} is set:
+                set {_dn} to {sculk-voice::decoders}.size()
+            set {_state} to "&cnon"
+            if {sculk-voice::consumer} is set:
+                set {_state} to "&aoui"
+            send "&7SculkVoice listener: %{_state}%"
+            send "&7Cooldowns: &f%size of {sculk-voice::cooldown::*}%"
+            send "&7Decoders:  &f%{_dn}%"
+            send "&7Queue:     &f%size of {sculk-voice::queue::*}%"
+        else if arg-1 is "test":
+            sculkVoiceTrigger(player, "strong")
+            send "&aGameEvent.HIT_GROUND envoye sur ta position."
+        else:
+            send "&7/sculkvoice [status|test]"
+
+# Nettoyage du decodeur a la deconnexion
+on quit:
+    if {sculk-voice::decoders} is set:
+        set {_uuidStr} to "%uuid of player%"
+        set {_d} to {sculk-voice::decoders}.remove({_uuidStr})
+        if {_d} is set:
+            try {_d}.close()
+    delete {sculk-voice::cooldown::%uuid of player%}

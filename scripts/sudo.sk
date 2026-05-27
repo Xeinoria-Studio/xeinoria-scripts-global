@@ -1,0 +1,22 @@
+command /sudop [<player>] [<text>]:
+    description: Execute a command as another player with all permissions
+    permission: admin
+    trigger:
+        if arg 2 is set:
+            dispatch arg-1 command arg-2 with permission "*"
+            send "&7[&3Sudo&7] &c%sender% has forced %arg-1% to execute with all permissions: /%arg-2%" to console
+            send "%arg-1% issued server command: /%arg-2%" to console
+        else:
+            send "&7[&3Sudo&7] &cUsage: /sudop <player> <command>"
+
+command /sudo [<player>] [<text>]:
+    description: Execute a command as another player
+    permission: admin
+    trigger:
+        if arg 2 is set:
+            dispatch arg-1 command arg-2
+            send "&7[&3Sudo&7] &c%sender% has forced %arg-1% to execute: /%arg-2%" to console
+            send "%arg-1% issued server command: /%arg-2%" to console
+        else:
+            send "&7[&3Sudo&7] &cUsage: /sudo <player> <command>"
+

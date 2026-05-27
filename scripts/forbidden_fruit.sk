@@ -1,0 +1,109 @@
+options:
+    ff_prefix: &c[Fruit Interdit] &r
+    ff_name: &6Fruit Interdit
+    ff_ban_duration: 1h
+    ff_display_name: Fruit Interdit
+
+# ============================================================
+#  Fonctions utilitaires
+# ============================================================
+
+function forbiddenFruitApplyEffects(p: player):
+    strike lightning effect at {_p}
+    apply blindness to {_p} for 10 seconds
+    play sound "minecraft:item.trident.thunder" with volume 100 with pitch 0.5 to players
+
+function forbiddenFruitShowWarning(p: player):
+    send title "&c&lFruit Interdit" with subtitle "&6Vous avez consommé le fruit interdit!" to {_p} for 10 ticks, 60 ticks and 10 ticks
+    send "" to {_p}
+    send "&c&m-----------------------------------------------------" to {_p}
+    send "&c&lFruit Interdit !" to {_p}
+    send "&7Vous avez consommé le fruit interdit..." to {_p}
+    send "&7Bannissement de 1 heure en cours." to {_p}
+    send "&c&m-----------------------------------------------------" to {_p}
+    send "" to {_p}
+
+function forbiddenFruitLogAction(playerName: text):
+    send "{@ff_prefix}&e[FORBIDDEN FRUIT] &7%{_playerName}% &8(ban 1h)" to console
+
+function forbiddenFruitBan(playerName: text):
+    wait 2 seconds
+    execute console command "litebans:tempban %{_playerName}% {@ff_ban_duration} [Fruit Interdit] Consommation du Fruit Interdit"
+
+function forbiddenFruitCreateItem() :: item:
+    set {_fruit} to golden apple
+    set display name of {_fruit} to "{@ff_display_name}"
+    set lore of {_fruit} to "&7Fruit de la mythologie ancienne...", "&6&lLourdes conséquences à y goûter"
+    return {_fruit}
+
+function forbiddenFruitIsCustomItem(it: item) :: boolean:
+    set {_displayName} to display name of {_it}
+    if {_displayName} is not set:
+        return false
+
+    if uncolored {_displayName} is not uncolored "{@ff_display_name}":
+        return false
+
+    set {_lore::*} to lore of {_it}
+    if {_lore::1} is not "&7Fruit de la mythologie ancienne...":
+        return false
+    if {_lore::2} is not "&6&lLourdes conséquences à y goûter":
+        return false
+
+    return true
+
+function forbiddenFruitGive(executor: player, target: player):
+    set {_fruit} to forbiddenFruitCreateItem()
+    give {_fruit} to {_target}
+    send "{@ff_prefix}&aFruit Interdit donné à %name of {_target}%." to {_executor}
+    send "{@ff_prefix}&aVous avez reçu le Fruit Interdit. Ne le consommez pas !" to {_target}
+
+# ============================================================
+#  Interception de consommation de pomme d'or enchantée
+#  (Fruit Interdit -> Ban 1h automatique)
+# ============================================================
+
+on consume of golden apple:
+    set {_item} to event-item
+
+    # Ne declenche que pour notre item custom exact
+    if forbiddenFruitIsCustomItem({_item}) is false:
+        stop
+    
+    # C'est la pomme interdite -> ban 1h
+    set {_player} to player
+    set {_playerName} to name of {_player}
+    
+    # Retirer les effets de la pomme avant le ban
+    remove all potion effects from {_player}
+    
+    # Appliquer les effets spéciaux
+    forbiddenFruitApplyEffects({_player})
+    
+    # Avertir le joueur avant le ban
+    forbiddenFruitShowWarning({_player})
+    
+    # Enregistrer l'action en console
+    forbiddenFruitLogAction({_playerName})
+    
+    # Appliquer le ban 1h via LiteBans
+    forbiddenFruitBan({_playerName})
+
+# ============================================================
+#  Commande pour donner la pomme interdite (admin uniquement)
+# ============================================================
+
+command /forbiddenfruit <text=give> [<player>]:
+    permission: admin
+    trigger:
+        if arg-1 is "give":
+            if arg-2 is not set:
+                set {_target} to player
+            else:
+                set {_target} to arg-2
+            
+            if {_target} is not set:
+                send "&cJoueur non trouvé." to player
+                stop
+            
+            forbiddenFruitGive(player, {_target})

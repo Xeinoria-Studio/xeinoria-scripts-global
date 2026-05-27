@@ -1,0 +1,107 @@
+options:
+    prefix: &6[Moderation] &r
+    perm_god: god.use
+    perm_god_others: god.others
+
+    # canal redis
+    god_channel: staff:god
+
+# =========================================================
+# ETAT LOCAL (fallback)
+# - Les variables Skript sont persistées sur disque par serveur.
+# - Si Redis tombe, ça continue de marcher sur le serveur actuel.
+# =========================================================
+
+function godKey(p: player) :: text:
+    return "god::%name of {_p}%"
+
+function isGod(name: text) :: boolean:
+    if {god::%{_name}%} is set:
+        return true
+    return false
+
+function setGodLocal(name: text, state: boolean):
+    if {_state} is true:
+        set {god::%{_name}%} to true
+    else:
+        delete {god::%{_name}%}
+
+function broadcastGod(name: text, state: boolean):
+    # fallback: même si Redis est down, le local est déjà appliqué.
+    # SkRedis: "send redis message %string% to [channel] %string%" :contentReference[oaicite:1]{index=1}
+    if {_state} is true:
+        send redis message "%{_name}%|1" to channel "{@god_channel}"
+    else:
+        send redis message "%{_name}%|0" to channel "{@god_channel}"
+
+# =========================================================
+# GOD EFFECT
+# =========================================================
+
+on damage:
+    if victim is a player:
+        if isGod(name of victim) is true:
+            cancel event
+
+# Optionnel: empêche aussi la faim en god (si tu veux pas, supprime ce bloc)
+on food level change:
+    if player is a player:
+        if isGod(name of player) is true:
+            cancel event
+
+# =========================================================
+# REDIS RECEIVE (sync)
+# message: "<name>|<0/1>"
+# =========================================================
+
+on redis message:
+    # Les noms exacts des expressions peuvent varier selon l’addon.
+    # SkRedis / RediSkript utilisent souvent "redis channel" et "redis message".
+    # Si ça fail, envoie-moi l’erreur et je te mets la bonne expression.
+    if redis channel is "{@god_channel}":
+        set {_parts::*} to split redis message at "|"
+        set {_name} to {_parts::1}
+        set {_state} to {_parts::2}
+
+        if {_name} is set:
+            if {_state} is "1":
+                setGodLocal({_name}, true)
+            else:
+                setGodLocal({_name}, false)
+
+# =========================================================
+# COMMAND
+# =========================================================
+
+command /god [<player>]:
+    permission: {@perm_god}
+    permission message: "{@prefix}&cPas la permission."
+    trigger:
+        if arg-1 is set:
+            if player does not have permission "{@perm_god_others}":
+                send "{@prefix}&cTu ne peux pas toggle les autres." to player
+                stop
+            set {_t} to arg-1
+        else:
+            set {_t} to player
+
+        set {_name} to name of {_t}
+
+        if isGod({_name}) is true:
+            setGodLocal({_name}, false)
+            broadcastGod({_name}, false)
+
+            if {_t} is player:
+                send "{@prefix}&cGod désactivé." to player
+            else:
+                send "{@prefix}&cGod désactivé pour &e%{_t}%&c." to player
+                send "{@prefix}&cGod désactivé." to {_t}
+        else:
+            setGodLocal({_name}, true)
+            broadcastGod({_name}, true)
+
+            if {_t} is player:
+                send "{@prefix}&aGod activé." to player
+            else:
+                send "{@prefix}&aGod activé pour &e%{_t}%&a." to player
+                send "{@prefix}&aGod activé." to {_t}

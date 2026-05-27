@@ -1,0 +1,26 @@
+command /fix [<player>]:
+    permission: fix.use
+    permission message: &cTu n'as pas la permission d'utiliser cette commande.
+    trigger:
+        if arg-1 is set:
+            set {_t} to arg-1
+        else:
+            set {_t} to player
+
+        loop {_t}'s inventory:
+            if loop-value is not air:
+                if durability of loop-value is set:
+                    repair loop-value
+
+        loop {_t}'s armor:
+            if loop-value is not air:
+                if durability of loop-value is set:
+                    repair loop-value
+
+        if {_t} is player:
+            send "&a✔ Tout ton équipement a été réparé !" to player
+        else:
+            send "&a✔ Tu as réparé l'équipement de &e%{_t}%&a." to player
+            send "&a✔ Ton équipement a été réparé par &e%player%&a." to {_t}
+
+        play sound "block.anvil.use" at {_t}

@@ -1,0 +1,23 @@
+command /crash [<text>]:
+	permission: admin
+	permission message: &cUnknown or incomplete command. See below for error%newline%&c&ncrash&r&c<--&c&o[HERE]
+	trigger:
+		if arg 1 is not set:
+			send "&c[Crash] Syntaxe : /crash <Joueur>"
+			stop
+		set {_target} to arg 1 parsed as player
+		if {_target} is online:
+			if {_target} doesn't have permission "admin":
+				send "&9[Crash] &6Lancement de la procédure du crash pour &a%{_target}% &6en cours..."
+				show  9999999999999 "flame" particles at location of {_target} for {_target}
+				send "&9[Crash] &aProcédure effectuée : Le joueur devrait crasher dans quelques secondes..."
+				stop
+			else:
+				send "&c[Crash] Tu ne peux pas faire Crash ce Joueur !"
+				stop
+
+
+on tab complete:
+	if event-string contains "/crash ":
+		player has permission "admin"
+		set tab completions for position 1 to players

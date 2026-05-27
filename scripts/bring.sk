@@ -1,0 +1,26 @@
+options:
+    prefix: &6[Moderation] &r
+    perm_bring: bring.use
+
+# -------------------------
+# /bring <player>   (alias /s)
+# -------------------------
+
+command /bring [<player>]:
+    aliases: s
+    permission: {@perm_bring}
+    permission message: "{@prefix}&cTu n'as pas la permission."
+    trigger:
+        set {_target} to arg-1
+        if {_target} is not set:
+            send "{@prefix}&cTu dois spécifier un joueur à bring."
+            stop
+
+        if {_target} is player:
+            send "{@prefix}&cTu ne peux pas te bring toi-même."
+            stop
+
+        teleport {_target} to player
+
+        send "{@prefix}&aTu as amené &e%{_target}%&a à toi."
+        send "{@prefix}&aTu as été amené à &e%player%&a." to {_target}

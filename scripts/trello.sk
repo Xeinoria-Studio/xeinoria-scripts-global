@@ -1,0 +1,7 @@
+command /trello [<text>]:
+    permission: admin
+    trigger:
+        if player is not op:
+            send "&cYou do not have permission to use this command."
+            stop
+        send "Voici le lien du trello: https://trello.com/b/KXEBhlvb/" to sender

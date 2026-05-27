@@ -1,0 +1,8 @@
+on server ping:
+	set motd to mini message from "<white><obf>!!</obf></white> <gradient:#9b99ff:#ff9b30><bold>Xeinoria</bold></gradient> <white><obf>!!</obf></white> - <color:#ff9b30>The Copper Age</color>%nl%» <color:#ff4596>Nouvelle mise à jour:</color> <color:#45d0ff>1.21.10</color>"
+
+
+command /motd:
+	permission: motd
+	trigger:
+		execute player command "/sk reload motd"

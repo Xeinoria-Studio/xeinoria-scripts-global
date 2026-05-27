@@ -1,0 +1,62 @@
+command /hidestaff [<text>] [<text>]:
+	description: Cache ou affiche le préfixe du staff pour les joueurs
+	aliases: hs, spystaff, spy
+	permission: staff
+	permission message: You do not have permission to use this command.
+	trigger:
+		if arg 1 is not set:
+			toggleStaffPrefix(player)
+			if isStaffPrefixHidden(player) is true:
+				send "&aLe préfix de &b%player% &aest désormais &7caché&a."
+			else:
+				send "&aLe préfix de &b%player% &aest désormais &2visible&a."
+			stop
+			
+		if arg 2 is set:
+			set {_target} to arg 2 parsed as player
+			if {_target} is null:
+				send "&cJoueur non trouvé."
+				stop
+		else:
+			set {_target} to player
+			
+		if arg 1 is "toggle":
+			toggleStaffPrefix({_target})
+			if isStaffPrefixHidden({_target}) is true:
+				send "&aLe préfix de &b%{_target}% &aest désormais &7caché&a."
+			else:
+				send "&aLe préfix de &b%{_target}% &aest désormais &2visible&a."
+			stop
+		if arg 1 is "on":
+			hideStaffPrefix({_target})
+			send "&aLe préfix de &b%{_target}% &aest désormais &7caché&a."
+			stop
+		if arg 1 is "off":
+			showStaffPrefix({_target})
+			send "&aLe préfix de &b%{_target}% &aest désormais &2visible&a."
+			stop
+		send "&cArgument invalide. Utilisation: /hidestaff [toggle|on|off] [joueur]"
+		
+function toggleStaffPrefix(target: player):
+	if isStaffPrefixHidden({_target}) is true:
+		hideStaffPrefix({_target})
+	else:
+		showStaffPrefix({_target})
+	
+function hideStaffPrefix(target: player):
+	execute console command "lp user %{_target}% parent add hidestaff"
+	
+function showStaffPrefix(target: player):
+	execute console command "lp user %{_target}% parent remove hidestaff"
+	
+function isStaffPrefixHidden(target: player) :: boolean:
+	if prefix of {_target} contains "[Joueur]":
+		return false
+	else:
+		return true
+
+		
+on tab complete of "/hidestaff" or "/hs" or "/spystaff" or "/spy":
+    set tab completions for position 1 to "toggle", "on" and "off"
+    set tab completions for position 2 to all players
+		

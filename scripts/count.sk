@@ -1,0 +1,8 @@
+command /count [<number=1>]:
+    trigger:
+        set {_i} to 0
+        set {_radius} to arg-1 + 1
+        loop all entities in radius {_radius} around player:
+            loop-entity is not a player
+            add 1 to {_i}
+        send "Number of entities in radius %arg-1% around you: %{_i}%"

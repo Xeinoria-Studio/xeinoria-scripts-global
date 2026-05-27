@@ -1,0 +1,12 @@
+on world change:
+    set the player's tablist name to "&7[%world of player%] &r%name of player%"
+
+on join:
+    set the player's tablist name to "&7[%world of player%] &r%name of player%"
+
+command /tablist [<text=reload>]:
+    permission: admin
+    trigger:
+        loop all players:
+            set the loop-player's tablist name to "&7[%world of loop-player%] &r%name of loop-player%"
+        send "&aTablist names reloaded!" to the player

@@ -1,0 +1,17 @@
+command /reportbug [<text>] [<text>]:
+    trigger:
+        set {_bug.title} to arg-1
+        set {_bug.description} to arg-2
+        set {_report::author} to sender
+        add {_report::*} to {report.bug::*}
+        send "&aMerci d'avoir signalé le bug &b%{_bug.title}%&a ! Votre rapport a été envoyé aux administrateurs." to player
+
+command /listbugs:
+    trigger:
+        if {report.bug::*} is not set:
+            send "&cAucun bug n'a été signalé pour le moment." to player
+        else:
+            send "&aListe des bugs signalés :" to player
+            loop {report.bug::*}:
+                set {_bug} to loop-value
+                send "&b- %{_bug.title}%: %{_bug.description}% (signalé par %{_report::author}%)" to player

@@ -1,0 +1,14 @@
+command /enderchest [<offline player>]:
+    aliases: ec
+    permission: invseeplusplus.endersee
+    trigger:
+        if sender is console:
+            send "This command can only be used by players." to sender
+            stop
+        if arg-1 is not set:
+            open ender chest of player to player
+            stop
+        if arg 1 is not online:
+            execute player command "endersee %arg-1%"
+            stop
+        open ender chest of arg-1 to player

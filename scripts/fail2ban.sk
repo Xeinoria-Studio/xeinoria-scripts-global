@@ -1,0 +1,416 @@
+import:
+    java.lang.ProcessBuilder
+    java.util.Scanner
+
+options:
+    f2b_prefix: &6[Fail2Ban] &r
+    f2b_minecraft_jail: minecraft
+    f2b_db_user: user
+    f2b_db_pass: password
+    f2b_db_name: minecraft
+
+# ============================================================
+#  Helpers shell / DB
+# ============================================================
+
+function runShell(cmd: text) :: text:
+    set {_pb} to new ProcessBuilder("bash", "-lc", {_cmd})
+    {_pb}.redirectErrorStream(true)
+    set {_process} to {_pb}.start()
+    set {_scanner} to new Scanner({_process}.getInputStream()).useDelimiter("\\A")
+
+    if {_scanner}.hasNext() is true:
+        set {_out} to {_scanner}.next()
+    else:
+        set {_out} to ""
+
+    {_process}.waitFor()
+    return {_out}
+
+function f2bIsMinecraftJail(jail: text) :: boolean:
+    if lowercase {_jail} is lowercase "{@f2b_minecraft_jail}":
+        return true
+    return false
+
+function f2bStatusAll() :: text:
+    return runShell("fail2ban-client status")
+
+function f2bStatusJail(jail: text) :: text:
+    return runShell("fail2ban-client status %{_jail}%")
+
+function f2bBanIp(jail: text, ip: text) :: text:
+    return runShell("fail2ban-client set %{_jail}% banip %{_ip}%")
+
+function f2bUnbanIp(jail: text, ip: text) :: text:
+    return runShell("fail2ban-client set %{_jail}% unbanip %{_ip}%")
+
+function f2bSetPermanentBanTime(jail: text):
+    runShell("fail2ban-client set %{_jail}% bantime -1")
+
+# ============================================================
+#  Validators
+# ============================================================
+
+function isValidJailName(jail: text) :: boolean:
+    if {_jail} matches "^[a-zA-Z0-9_-]+$":
+        return true
+    return false
+
+function isValidIPv4(ip: text) :: boolean:
+    if {_ip} matches "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$":
+        return true
+    return false
+
+function isValidMinecraftName(name: text) :: boolean:
+    if {_name} matches "^[a-zA-Z0-9_]{2,16}$":
+        return true
+    return false
+
+# ============================================================
+#  LiteBans : resolve pseudo -> IP(s)
+# ============================================================
+
+# Retourne une liste d'IPs separees par des virgules.
+# Si target est deja une IP, la retourne telle quelle.
+# Sinon, cherche dans litebans_history toutes les IPs distinctes liees au pseudo.
+function f2bResolveIps(target: text, extraIp: text = "") :: text:
+    if isValidIPv4({_target}) is true:
+        return {_target}
+
+    if isValidMinecraftName({_target}) is false:
+        return ""
+
+    set {_sql} to "SELECT DISTINCT ip FROM litebans_history WHERE LOWER(name)=LOWER('%{_target}%') AND ip IS NOT NULL AND ip<>'' ORDER BY date DESC LIMIT 50;"
+    set {_cmd} to "mysql --batch --skip-column-names -u{@f2b_db_user} -p{@f2b_db_pass} -D {@f2b_db_name} --execute=""%{_sql}%"" 2>/dev/null"
+    set {_raw} to runShell({_cmd})
+
+    set {_result} to ""
+    if {_extraIp} is not "":
+        if isValidIPv4({_extraIp}) is true:
+            set {_result} to {_extraIp}
+
+    if {_raw} is not "":
+        loop split {_raw} at newline:
+            set {_line} to loop-value
+            replace all " " with "" in {_line}
+            replace all "\r" with "" in {_line}
+            replace all "\t" with "" in {_line}
+            if isValidIPv4({_line}) is true:
+                if {_result} is "":
+                    set {_result} to {_line}
+                else if {_result} does not contain {_line}:
+                    set {_result} to "%{_result}%,%{_line}%"
+
+    return {_result}
+
+# Rafraichit le cache des pseudos pour la tab completion.
+function f2bRefreshNameSuggestions():
+    set {_sql} to "SELECT DISTINCT name FROM litebans_history WHERE name IS NOT NULL AND LENGTH(name)>0 ORDER BY date DESC LIMIT 200;"
+    set {_cmd} to "mysql --batch --skip-column-names -u{@f2b_db_user} -p{@f2b_db_pass} -D {@f2b_db_name} --execute=""%{_sql}%"" 2>/dev/null"
+    set {_raw} to runShell({_cmd})
+    delete {f2b.tab.names::*}
+    if {_raw} is "":
+        set {f2b.tab.last_refresh} to now
+        stop
+    loop split {_raw} at newline:
+        set {_line} to loop-value
+        replace all " " with "" in {_line}
+        replace all "\r" with "" in {_line}
+        replace all "\t" with "" in {_line}
+        if isValidMinecraftName({_line}) is true:
+            add {_line} to {f2b.tab.names::*}
+    set {f2b.tab.last_refresh} to now
+
+# ============================================================
+#  Refresh schedule
+# ============================================================
+
+on load:
+    f2bRefreshNameSuggestions()
+
+every 5 minutes:
+    f2bRefreshNameSuggestions()
+
+# ============================================================
+#  Command
+# ============================================================
+
+command /f2b [<text>] [<text>] [<text>]:
+    aliases: /fail2ban
+    permission: admin
+    trigger:
+        set {_isPlayerSender} to false
+        if player is set:
+            set {_isPlayerSender} to true
+
+        if arg-1 is not set:
+            if {_isPlayerSender} is true:
+                send "{@f2b_prefix}&7Usage: &e/f2b status&7, &e/f2b jails&7, &e/f2b banip <pseudo|ip>&7, &e/f2b unbanip <pseudo|ip>"
+            else:
+                send "{@f2b_prefix}&7Usage: &e/f2b status [jail]&7, &e/f2b jails&7, &e/f2b banip <jail> <pseudo|ip>&7, &e/f2b unbanip <jail> <pseudo|ip>"
+            stop
+
+        set {_action} to lowercase arg-1
+
+        # ---------------- refresh ----------------
+        if {_action} is "refresh":
+            f2bRefreshNameSuggestions()
+            send "{@f2b_prefix}&aCache des pseudos rafraichi: &e%size of {f2b.tab.names::*}% &apseudos."
+            stop
+
+        # ---------------- jails ----------------
+        if {_action} is "jails":
+            if {_isPlayerSender} is true:
+                set {_out} to f2bStatusJail("{@f2b_minecraft_jail}")
+                if {_out} is "":
+                    send "{@f2b_prefix}&cAucune sortie. Verifie fail2ban/service."
+                    stop
+                send "{@f2b_prefix}&aJail Minecraft ({@f2b_minecraft_jail}):"
+                set {_n} to 0
+                loop split {_out} at "\n":
+                    add 1 to {_n}
+                    send "&7%loop-value%"
+                    if {_n} >= 20:
+                        stop loop
+                stop
+
+            set {_out} to f2bStatusAll()
+            if {_out} is "":
+                send "{@f2b_prefix}&cAucune sortie. Verifie fail2ban/service."
+                stop
+            send "{@f2b_prefix}&aJails:"
+            loop split {_out} at "\n":
+                if loop-value contains "Jail list":
+                    send "&7%loop-value%"
+            stop
+
+        # ---------------- status ----------------
+        if {_action} is "status":
+            if arg-2 is set:
+                set {_jail} to lowercase arg-2
+                if isValidJailName({_jail}) is false:
+                    send "{@f2b_prefix}&cNom de jail invalide."
+                    stop
+                if {_isPlayerSender} is true:
+                    if f2bIsMinecraftJail({_jail}) is false:
+                        send "{@f2b_prefix}&cEn jeu, tu peux gerer uniquement la jail &e{@f2b_minecraft_jail}&c."
+                        stop
+                set {_out} to f2bStatusJail({_jail})
+            else:
+                if {_isPlayerSender} is true:
+                    set {_out} to f2bStatusJail("{@f2b_minecraft_jail}")
+                else:
+                    set {_out} to f2bStatusAll()
+
+            if {_out} is "":
+                send "{@f2b_prefix}&cAucune sortie. Verifie fail2ban/service."
+                stop
+
+            send "{@f2b_prefix}&aStatut:"
+            set {_n} to 0
+            loop split {_out} at "\n":
+                add 1 to {_n}
+                send "&7%loop-value%"
+                if {_n} >= 12:
+                    stop loop
+            stop
+
+        # ---------------- banip ----------------
+        if {_action} is "banip":
+            if arg-2 is not set:
+                if {_isPlayerSender} is true:
+                    send "{@f2b_prefix}&cUsage: &e/f2b banip <pseudo|ip>"
+                else:
+                    send "{@f2b_prefix}&cUsage: &e/f2b banip <jail> <pseudo|ip>"
+                stop
+
+            if {_isPlayerSender} is true:
+                set {_jail} to "{@f2b_minecraft_jail}"
+                set {_target} to arg-2
+            else:
+                if arg-3 is not set:
+                    send "{@f2b_prefix}&cUsage: &e/f2b banip <jail> <pseudo|ip>"
+                    stop
+                set {_jail} to lowercase arg-2
+                set {_target} to arg-3
+
+            if isValidJailName({_jail}) is false:
+                send "{@f2b_prefix}&cNom de jail invalide."
+                stop
+
+            # Recupere l'IP courante si le pseudo est en ligne
+            set {_extraIp} to ""
+            if isValidMinecraftName({_target}) is true:
+                loop all players:
+                    if name of loop-player is {_target}:
+                        set {_rawIp} to ip of loop-player
+                        replace all "/" with "" in {_rawIp}
+                        set {_parts::*} to split {_rawIp} at ":"
+                        set {_extraIp} to {_parts::1}
+                        exit loop
+
+            set {_ipsCsv} to f2bResolveIps({_target}, {_extraIp})
+            if {_ipsCsv} is "":
+                send "{@f2b_prefix}&cAucune IP trouvee pour &e%{_target}%&c. Pseudo inconnu ou jamais sanctionne."
+                stop
+
+            if f2bIsMinecraftJail({_jail}) is true:
+                f2bSetPermanentBanTime({_jail})
+
+            set {_count} to 0
+            set {_failed} to 0
+            loop split {_ipsCsv} at ",":
+                set {_ip} to loop-value
+                if isValidIPv4({_ip}) is true:
+                    set {_out} to f2bBanIp({_jail}, {_ip})
+                    add 1 to {_count}
+                    if {_isPlayerSender} is true:
+                        send "{@f2b_prefix}&aIP bannie &7(jail: &e%{_jail}%&7)" to player
+                        send "{@f2b_prefix}&aIP bannie: &e%{_ip}% &7(jail: &e%{_jail}%&7) &8[par %player%]" to console
+                    else:
+                        send "{@f2b_prefix}&aIP bannie: &e%{_ip}% &7(jail: &e%{_jail}%&7)"
+                else:
+                    add 1 to {_failed}
+
+            if {_count} is 0:
+                send "{@f2b_prefix}&cAucune IP valide a bannir."
+                stop
+            send "{@f2b_prefix}&aTotal: &e%{_count}% &aIP(s) bannie(s) pour &e%{_target}%&a."
+            stop
+
+        # ---------------- unbanip ----------------
+        if {_action} is "unbanip":
+            if arg-2 is not set:
+                if {_isPlayerSender} is true:
+                    send "{@f2b_prefix}&cUsage: &e/f2b unbanip <pseudo|ip>"
+                else:
+                    send "{@f2b_prefix}&cUsage: &e/f2b unbanip <jail> <pseudo|ip>"
+                stop
+
+            if {_isPlayerSender} is true:
+                set {_jail} to "{@f2b_minecraft_jail}"
+                set {_target} to arg-2
+            else:
+                if arg-3 is not set:
+                    send "{@f2b_prefix}&cUsage: &e/f2b unbanip <jail> <pseudo|ip>"
+                    stop
+                set {_jail} to lowercase arg-2
+                set {_target} to arg-3
+
+            if isValidJailName({_jail}) is false:
+                send "{@f2b_prefix}&cNom de jail invalide."
+                stop
+
+            # Recupere l'IP courante si le pseudo est en ligne
+            set {_extraIp} to ""
+            if isValidMinecraftName({_target}) is true:
+                loop all players:
+                    if name of loop-player is {_target}:
+                        set {_rawIp} to ip of loop-player
+                        replace all "/" with "" in {_rawIp}
+                        set {_parts::*} to split {_rawIp} at ":"
+                        set {_extraIp} to {_parts::1}
+                        exit loop
+
+            set {_ipsCsv} to f2bResolveIps({_target}, {_extraIp})
+            if {_ipsCsv} is "":
+                send "{@f2b_prefix}&cAucune IP trouvee pour &e%{_target}%&c."
+                stop
+
+            set {_count} to 0
+            loop split {_ipsCsv} at ",":
+                set {_ip} to loop-value
+                if isValidIPv4({_ip}) is true:
+                    set {_out} to f2bUnbanIp({_jail}, {_ip})
+                    add 1 to {_count}
+                    if {_isPlayerSender} is true:
+                        send "{@f2b_prefix}&aIP debannie &7(jail: &e%{_jail}%&7)" to player
+                        send "{@f2b_prefix}&aIP debannie: &e%{_ip}% &7(jail: &e%{_jail}%&7) &8[par %player%]" to console
+                    else:
+                        send "{@f2b_prefix}&aIP debannie: &e%{_ip}% &7(jail: &e%{_jail}%&7)"
+
+            if {_count} is 0:
+                send "{@f2b_prefix}&cAucune IP valide a debannir."
+                stop
+            send "{@f2b_prefix}&aTotal: &e%{_count}% &aIP(s) debannie(s) pour &e%{_target}%&a."
+            stop
+
+        # ---------------- fallback ----------------
+        if {_isPlayerSender} is true:
+            send "{@f2b_prefix}&7Usage: &e/f2b status&7, &e/f2b jails&7, &e/f2b banip <pseudo|ip>&7, &e/f2b unbanip <pseudo|ip>"
+        else:
+            send "{@f2b_prefix}&7Usage: &e/f2b status [jail]&7, &e/f2b jails&7, &e/f2b banip <jail> <pseudo|ip>&7, &e/f2b unbanip <jail> <pseudo|ip>"
+
+# ============================================================
+#  Tab Completion (SkBee syntax: tab arg-N)
+# ============================================================
+
+on tab complete of "/f2b" or "/fail2ban":
+    if player is set:
+        if player does not have permission "admin":
+            stop
+
+    # Position 1 : actions
+    set tab completions for position 1 to "status", "jails", "banip" and "unbanip"
+
+    # Auto-refresh si cache vide (premier TAB apres demarrage)
+    if {f2b.tab.names::*} is not set:
+        f2bRefreshNameSuggestions()
+
+    # Position 2 : depend de l'action choisie
+    if tab arg-1 is "status":
+        set tab completions for position 2 to "{@f2b_minecraft_jail}"
+
+    else if tab arg-1 is "banip":
+        if player is set:
+            # joueur en jeu : pseudo direct (LiteBans + en-ligne)
+            delete {_tabs::*}
+            loop {f2b.tab.names::*}:
+                add loop-value to {_tabs::*}
+            loop all players:
+                add name of loop-player to {_tabs::*}
+            if {_tabs::*} is set:
+                set tab completions for position 2 to {_tabs::*}
+            else:
+                set tab completions for position 2 to "<pseudo|ip>"
+        else:
+            # console : jail puis pseudo
+            set tab completions for position 2 to "{@f2b_minecraft_jail}"
+
+    else if tab arg-1 is "unbanip":
+        if player is set:
+            delete {_tabs::*}
+            loop {f2b.tab.names::*}:
+                add loop-value to {_tabs::*}
+            loop all players:
+                add name of loop-player to {_tabs::*}
+            if {_tabs::*} is set:
+                set tab completions for position 2 to {_tabs::*}
+            else:
+                set tab completions for position 2 to "<pseudo|ip>"
+        else:
+            set tab completions for position 2 to "{@f2b_minecraft_jail}"
+
+    # Position 3 : seulement console pour banip/unbanip => pseudos
+    if tab arg-1 is "banip":
+        if player is not set:
+            delete {_tabs::*}
+            loop {f2b.tab.names::*}:
+                add loop-value to {_tabs::*}
+            loop all players:
+                add name of loop-player to {_tabs::*}
+            if {_tabs::*} is set:
+                set tab completions for position 3 to {_tabs::*}
+            else:
+                set tab completions for position 3 to "<pseudo|ip>"
+    if tab arg-1 is "unbanip":
+        if player is not set:
+            delete {_tabs::*}
+            loop {f2b.tab.names::*}:
+                add loop-value to {_tabs::*}
+            loop all players:
+                add name of loop-player to {_tabs::*}
+            if {_tabs::*} is set:
+                set tab completions for position 3 to {_tabs::*}
+            else:
+                set tab completions for position 3 to "<pseudo|ip>"

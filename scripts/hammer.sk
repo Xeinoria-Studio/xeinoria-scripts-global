@@ -1,0 +1,152 @@
+command /banhammer [<text=give>] [<player>]:
+    aliases: bh
+    permission: admin
+    trigger:
+        if arg-1 is "give":
+            if arg-2 is not set:
+                if player's name is not "Norath1211":
+                    if player's name is not "Shamallow_":
+                        if player's name is not "Norace1211":
+                            send "&cVous n'avez pas la permission d'utiliser cette commande." to player
+                            stop
+                give player 1 mace of sharpness 1000 named "&7&k!!!&r &cBan Hammer &7&k!!!" with lore "&bMODE: &6FOUDRE" and "&7Outil dédié uniquement au fondateur &bNorath1211" and "&7Forgé par les lignes de code de l'univers par le grand &bShamallow_" and "&7Sera sûrement utilisé à tort et à travers car Norath est un débilus :P"
+                send "&aVous avez reçu le &cBan Hammer &a!" to player
+        if arg-1 is "disable":
+            setUsableHammer(false)
+            send "&cLe Ban Hammer a été désactivé." to player
+        if arg-1 is "enable":
+            setUsableHammer(true)
+            send "&aLe Ban Hammer a été activé." to player
+
+function setUsableHammer(b: boolean):
+    if {_b} is true:
+        clear {hammerusable}
+    else:
+        set {hammerusable} to false
+
+function toggleUsableHammer():
+    if {hammerusable} is not set:
+        set {hammerusable} to false
+    else:
+        clear {hammerusable}
+
+function isHammerUsable() :: boolean:
+    if {hammerusable} is not set:
+        return true
+    else:
+        return false
+
+on click:
+    player is holding mace named "&7&k!!!&r &cBan Hammer &7&k!!!"
+    player is not sneaking
+    target is a player
+    # distance between player and target is less than 30
+    cancel event
+    banhammer(player, target)
+
+on damage:
+    attacker is holding mace named "&7&k!!!&r &cBan Hammer &7&k!!!"
+    distance between attacker and victim is less than 5
+    cancel event
+    banhammer(attacker, victim)
+
+on rightclick:
+    player is holding mace named "&7&k!!!&r &cBan Hammer &7&k!!!"
+    player is sneaking
+    cancel event
+    switchHammerEffect(player)
+
+function banhammer(p: player, e: entity):
+    {_p} is a player
+    applyHammerEffect({_p}, {_e})
+
+function switchHammerEffect(p: player):
+    {_p} is holding mace named "&7&k!!!&r &cBan Hammer &7&k!!!"
+    {_p} is sneaking
+    play sound "minecraft:block.note_block.hat" with volume 100 with pitch 1 to {_p}
+    if the 1st line of the lore of the tool of {_p} is "&bMODE: &cBANNISSEMENT":
+        set the 1st line of the lore of the tool of {_p} to "&bMODE: &6EXPULSION"
+        send "&aLe mode du Ban Hammer a été changé en &6EXPULSION&6." to {_p}
+    else if the 1st line of the lore of the tool of {_p} is "&bMODE: &6EXPULSION":
+        set the 1st line of the lore of the tool of {_p} to "&bMODE: &6PRISON"
+        send "&aLe mode du Ban Hammer a été changé en &6PRISON&6." to {_p}
+    else if the 1st line of the lore of the tool of {_p} is "&bMODE: &6PRISON":
+        set the 1st line of the lore of the tool of {_p} to "&bMODE: &6TUER"
+        send "&aLe mode du Ban Hammer a été changé en &6TUER&6." to {_p}
+    else if the 1st line of the lore of the tool of {_p} is "&bMODE: &6TUER":
+        set the 1st line of the lore of the tool of {_p} to "&bMODE: &6FOUDRE"
+        send "&aLe mode du Ban Hammer a été changé en &6FOUDRE&6." to {_p}
+    else if the 1st line of the lore of the tool of {_p} is "&bMODE: &6FOUDRE":
+        set the 1st line of the lore of the tool of {_p} to "&bMODE: &6FOUDRE DOULOUREUSE"
+        send "&aLe mode du Ban Hammer a été changé en &6FOUDRE DOULOUREUSE&6." to {_p}
+    else if the 1st line of the lore of the tool of {_p} is "&bMODE: &6FOUDRE DOULOUREUSE":
+        set the 1st line of the lore of the tool of {_p} to "&bMODE: &4CRASH"
+        send "&aLe mode du Ban Hammer a été changé en &4CRASH&6." to {_p}
+    else if the 1st line of the lore of the tool of {_p} is "&bMODE: &4CRASH":
+        set the 1st line of the lore of the tool of {_p} to "&bMODE: &cBANNISSEMENT"
+        send "&aLe mode du Ban Hammer a été changé en &cBANNISSEMENT&6." to {_p}
+    else:
+        set the 1st line of the lore of the tool of {_p} to "&bMODE: &cBANNISSEMENT"
+        send "&aLe mode du Ban Hammer a été changé en &cBANNISSEMENT&6." to {_p}
+
+# {_p} is the player applying the punishment
+# {_e} is the entity being punished
+function applyHammerEffect(p: player, e: entity):
+    if isHammerUsable() is false:
+        send "&cLe Ban Hammer est actuellement désactivé." to {_p}
+        stop
+    if the 1st line of the lore of the tool of {_p} is "&bMODE: &cBANNISSEMENT":
+        if {_e} is a player:
+            strike lightning effect at {_e}
+            play sound "minecraft:item.trident.thunder" with volume 100 with pitch 0.5 to players
+            apply blindness 2 to {_e} for 1 second
+            wait 0.5 seconds
+            execute console command "ban %{_e}% &b%{_p}% &cvous a définitivement banni avec le &7&k!!!&r &4Saint Ban Hammer &7&k!!!&r &c."
+        else if {_e} is a mob:
+            strike lightning effect at {_e}
+            kill {_e}
+    else if the 1st line of the lore of the tool of {_p} is "&bMODE: &6EXPULSION":
+        if {_e} is a player:
+            strike lightning effect at {_e}
+            kick {_e} due to "Vous avez été expulsé par le Ban Hammer."
+        else if {_e} is a mob:
+            strike lightning effect at {_e}
+            kill {_e}
+    else if the 1st line of the lore of the tool of {_p} is "&bMODE: &6PRISON":
+        if {_e} is a player:
+            # /playsound minecraft:item.trident.thunder master Shamallow_ ~ ~ ~ 10000 0.5 1
+            # tous les joueurs du monde entendent le son
+            #doc : play sound "music.game.palierup" with volume 0.5 with pitch {_Pitch} to {_player}
+            execute console command "jail %{_e}% ilejail"
+            send "&a{_e} a été envoyé en prison." to {_p}
+            play sound "minecraft:entity.player.teleport" with volume 100 with pitch 1 to {_e}
+            play sound "minecraft:entity.player.teleport" with volume 100 with pitch 1 to {_p}
+        else if {_e} is a mob:
+            strike lightning effect at {_e}
+            kill {_e}        
+    else if the 1st line of the lore of the tool of {_p} is "&bMODE: &6TUER":
+        if {_e} is a player:
+            strike lightning effect at {_e}
+            execute console command "kill %{_e}%"
+        else if {_e} is a mob:
+            strike lightning effect at {_e}
+            kill {_e}
+    else if the 1st line of the lore of the tool of {_p} is "&bMODE: &6FOUDRE":
+        if {_e} is a player:
+            strike lightning effect at {_e}
+        else if {_e} is a mob:
+            strike lightning effect at {_e}
+    else if the 1st line of the lore of the tool of {_p} is "&bMODE: &6FOUDRE DOULOUREUSE":
+        if {_e} is a player:
+            strike lightning at {_e}
+        else if {_e} is a mob:
+            strike lightning at {_e}
+    else if the 1st line of the lore of the tool of {_p} is "&bMODE: &4CRASH":
+        if {_e} is a player:
+            strike lightning effect at {_e}
+            execute console command "crash %{_e}%"
+
+
+
+        
+

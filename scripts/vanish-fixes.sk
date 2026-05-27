@@ -1,0 +1,102 @@
+#!===============================================================================
+#! Vanish No XP
+#!===============================================================================
+#! Empeche les joueurs en vanish (PremiumVanish) de ramasser l'XP au sol,
+#! sauf si leur option de pickup est active.
+#! Detection tipu: API PremiumVanish via skript-reflect (hasItemPickUpsEnabled)
+#! Fallback: Bukkit can pick up items puis PlaceholderAPI
+#! Event SkBee: "on player pickup experience"
+#!===============================================================================
+
+import:
+    de.myzelyam.api.vanish.VanishAPI
+
+on player pickup experience:
+    if vanishFixesIsVanished(event-player) is true:
+        set {_tipu} to vanishFixesCanPickupItems(event-player)
+        if {_tipu} is true:
+            stop
+        cancel event
+
+# Fallback pour les coffres en cuivre: PremiumVanish 2.10.0 ne les traite pas
+# encore dans son mode silent chest. On reproduit l'effet discret ici.
+on right click:
+    if vanishFixesIsVanished(player) is not true:
+        stop
+    if player does not have permission "pv.silentchest":
+        stop
+    if clicked block is not set:
+        stop
+    if vanishFixesIsCopperChest(clicked block) is not true:
+        stop
+
+    # Evite l'ouverture normale (animation/son), puis ouvre le conteneur en spectator.
+    cancel event
+    set {_inv} to inventory of clicked block
+    if {_inv} is not set:
+        stop
+
+    set {_oldMode} to gamemode of player
+    if {_oldMode} is not spectator (gamemode):
+        set gamemode of player to spectator
+    wait 1 tick
+    open {_inv} to player
+    wait 1 tick
+    if {_oldMode} is set:
+        set gamemode of player to {_oldMode}
+
+# True si le joueur est en vanish d'apres PremiumVanish (via PlaceholderAPI).
+function vanishFixesIsVanished(target: player) :: boolean:
+    set {_v} to placeholder "premiumvanish_isvanished" from {_target}
+    return vanishFixesIsTruthy({_v})
+
+# True si le joueur peut ramasser des items (etat pickup actif).
+function vanishFixesCanPickupItems(target: player) :: boolean:
+    set {_api} to vanishFixesCanPickupItemsApi({_target})
+    if {_api} is true:
+        return true
+
+    # Si l'API dit explicitement false, on respecte /v tipu OFF.
+    if {_api} is false:
+        return false
+
+    # Si l'API est indisponible, fallbacks.
+    if {_api} is not set:
+        # Fallback 1: etat Bukkit natif
+        if {_target} can pick up items:
+            return true
+
+        # Fallback 2: PlaceholderAPI joueur
+        set {_v} to placeholder "player_can_pickup_items" from {_target}
+        return vanishFixesIsTruthy({_v})
+
+    return false
+
+# True/false si l'API PremiumVanish est accessible, sinon value not set.
+function vanishFixesCanPickupItemsApi(target: player) :: object:
+    # Source principale: API interne PremiumVanish (toggle /v tipu).
+    set {_plugin} to VanishAPI.getPlugin()
+    if {_plugin} is set:
+        set {_vp} to {_plugin}.getVanishPlayer({_target})
+        if {_vp} is set:
+            return {_vp}.hasItemPickUpsEnabled()
+
+function vanishFixesIsCopperChest(b: block) :: boolean:
+    set {_t} to uppercase "%type of {_b}%"
+    if {_t} contains "COPPER":
+        if {_t} contains "CHEST":
+            return true
+    return false
+
+# Normalise les sorties PlaceholderAPI (Yes/No, true/false, on/off, 1/0).
+function vanishFixesIsTruthy(value: text) :: boolean:
+    set {_v} to lowercase "%{_value}%"
+    if {_v} is "yes":
+        return true
+    if {_v} is "true":
+        return true
+    if {_v} is "on":
+        return true
+    if {_v} is "1":
+        return true
+    return false

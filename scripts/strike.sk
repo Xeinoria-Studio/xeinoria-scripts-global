@@ -1,0 +1,83 @@
+function getLookStrikeLocation(p: player) :: location:
+    set {_targetBlock} to target block of {_p}
+    if {_targetBlock} is set:
+        set {_strikeLoc} to location of {_targetBlock}
+        add 1 to y-coordinate of {_strikeLoc}
+        return {_strikeLoc}
+
+    set {_strikeLoc} to location of {_p}
+    add 2 to y-coordinate of {_strikeLoc}
+    return {_strikeLoc}
+
+function getPlayerStrikeLocation(target: player) :: location:
+    set {_strikeLoc} to location of {_target}
+    add 1 to y-coordinate of {_strikeLoc}
+    return {_strikeLoc}
+
+function strikeEffectAt(loc: location):
+    strike lightning effect at {_loc}
+
+function strikeDamageAt(loc: location):
+    # Eclair visuel + degats sans casser l'environnement
+    strike lightning effect at {_loc}
+    loop living entities in radius 2 around {_loc}:
+        damage loop-entity by 8 hearts
+
+function strikeEffectAtLook(p: player):
+    set {_loc} to getLookStrikeLocation({_p})
+    strikeEffectAt({_loc})
+
+function strikeDamageAtLook(p: player):
+    set {_loc} to getLookStrikeLocation({_p})
+    strikeDamageAt({_loc})
+
+function strikeEffectOnPlayer(target: player):
+    set {_loc} to getPlayerStrikeLocation({_target})
+    strikeEffectAt({_loc})
+
+function strikeDamageOnPlayer(target: player):
+    set {_loc} to getPlayerStrikeLocation({_target})
+    strikeDamageAt({_loc})
+
+function getStrikeWand() :: item:
+    set {_wand} to blaze rod named "&eLightning Wand"
+    set lore of {_wand} to "&7Clic droit: effet visuel", "&7Clic gauche: eclair avec degats", "&7sans casser les blocs."
+    return {_wand}
+
+command /strike [<player>]:
+    permission: admin
+    trigger:
+        if arg-1 is set:
+            strikeEffectOnPlayer(arg-1)
+            send "&eEclair visuel lance sur &f%arg-1%&e." to player
+        else:
+            strikeEffectAtLook(player)
+            send "&eEclair visuel lance." to player
+
+command /lightining [<player>]:
+    aliases: lightning
+    permission: admin
+    trigger:
+        if arg-1 is set:
+            strikeDamageOnPlayer(arg-1)
+            send "&eEclair avec degats lance sur &f%arg-1%&e." to player
+        else:
+            strikeDamageAtLook(player)
+            send "&eEclair avec degats lance." to player
+
+command /strikewand [<text=give>]:
+    permission: admin
+    trigger:
+        if arg-1 is "give":
+            give getStrikeWand() to player
+            send "&eTu as recu la Lightning Wand." to player
+
+on right click:
+    if player's tool is getStrikeWand():
+        cancel event
+        strikeEffectAtLook(player)
+
+on left click:
+    if player's tool is getStrikeWand():
+        cancel event
+        strikeDamageAtLook(player)

@@ -1,0 +1,45 @@
+on right click on a player:
+	player is wearing leather boots
+	isPantoufle(boots of player)
+	make player ride clicked entity
+	
+on boots change:
+	if isPantoufle(event-item) is true:
+		if player's name is not "KikooEnPantoufle":
+			set boots of player to air
+			wait 1 tick
+			if player's tool is air:
+				givePantoufle(player)
+			send "&cSeul KikooEnPantoufle peut porter ces pantoufles!" to player
+			stop
+		strike lightning effect at location of player
+		
+command /panpan [<text=give>] [<offline player>]:
+	aliases: /kikouenpantoufle
+	permission: admin
+	trigger:
+		if player is riding a entity:
+			make player dismount
+			send "&aVous êtes descendu" to player
+			stop
+		if arg-1 is "give":
+			if arg-2 is online:
+				givePantoufle(arg-2)
+				send "&aVous avez donné les &7&k!&r &cPantoufles de Kikou &7&k!&r &aà &b%arg-2%" to player
+			else:
+				givePantoufle(player)
+				send "&aVous avez reçu les pantoufles de Kikou." to player
+		else:
+			send "&cUtilisation: /panpan give [joueur]" to player
+			
+function isPantoufle(item: itemstack) :: boolean:
+	if {_item} is leather boots:
+		if name of {_item} contains "&cPantoufle de Kikou":
+			return true
+	return false
+	
+function givePantoufle(p: player):
+	set {_} to unbreakable leather boots named "&7&k!&r &cPantoufle de Kikou &7&k!&r" with lore "&7Les pantoufles les plus &cdouces &7du monde!"
+	dye {_} (92, 16, 27) # #5C101B
+	add armor trim using netherite_material with wild_pattern to armor trim of {_}
+	give {_} to {_p}

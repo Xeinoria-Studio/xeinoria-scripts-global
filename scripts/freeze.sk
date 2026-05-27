@@ -1,0 +1,334 @@
+options:
+    # perms
+    perm_freeze: staff.freeze
+    perm_bypass: staff.freeze.bypass
+
+    # redis
+    chan_freeze: staff:freeze
+
+    # TTL fallback local (jours)
+    local_ttl_days: 7
+
+    # allowlist commandes (séparées par ", ")
+    allow_cmds: "/msg, /r"
+
+    # messages (prefix inclus DIRECTEMENT)
+    msg_no_perm: &7[&bFreeze&7] &r&cPas la permission.
+    msg_bypass: &7[&bFreeze&7] &r&cCe joueur bypass le freeze.
+    msg_frozen: &7[&bFreeze&7] &r&cTu es freeze. Ne bouge pas.
+    msg_frozen_short: &7[&bFreeze&7] &r&cFreeze.
+    msg_staff_frozen: &7[&bFreeze&7] &r&c%arg-1% est freeze.
+    msg_staff_unfrozen: &7[&bFreeze&7] &r&a%arg-1% n'est plus freeze.
+
+# =========================================================
+# Helpers
+# =========================================================
+
+function redisKey(name: text) :: text:
+    return "freeze:%{_name}%"
+
+function normName(t: text) :: text:
+    set {_n} to {_t}
+    replace all " " with "" in {_n}
+    return {_n}
+
+function isFrozen(name: text) :: boolean:
+    if {freeze::%{_name}%} is set:
+        return true
+    return false
+
+function setFrozenLocal(name: text, state: boolean, by: text = ""):
+    if {_state} is true:
+        set {freeze::%{_name}%} to true
+        set {freeze::ts::%{_name}%} to now
+        if {_by} is set:
+            set {freeze::by::%{_name}%} to {_by}
+    else:
+        delete {freeze::%{_name}%}
+        delete {freeze::ts::%{_name}%}
+        delete {freeze::by::%{_name}%}
+
+function applyFrozenEffects(p: player):
+    if {_p} has permission "{@perm_bypass}":
+        stop
+
+    # Pas de potions => pas de particules
+    set {_p}'s walk speed to 0
+    set {_p}'s fly speed to 0
+    set {_p}'s flight mode to false
+    disallow flight for {_p}
+
+function clearFrozenEffects(p: player):
+    set {_p}'s walk speed to 0.2
+    set {_p}'s fly speed to 0.1
+
+function msgFrozen(p: player):
+    send "{@msg_frozen}" to {_p}
+
+# =========================================================
+# Redis (persist + pubsub)
+# Redis string value: "1|<by>"
+# Pub/Sub message: "<name>|<0/1>|<by>"
+# =========================================================
+
+function persistFreezeRedis(name: text, state: boolean, by: text = ""):
+    # async = évite tout impact
+    run redis async:
+        set {_k} to redisKey({_name})
+        if {_state} is true:
+            set redis string {_k} to "1|%{_by}%"
+        else:
+            delete redis string {_k}
+
+function publishFreezeRedis(name: text, state: boolean, by: text = ""):
+    if {_state} is true:
+        send redis message "%{_name}%|1|%{_by}%" to channel "{@chan_freeze}"
+    else:
+        send redis message "%{_name}%|0|%{_by}%" to channel "{@chan_freeze}"
+
+function setFreezeGlobal(name: text, state: boolean, by: text = ""):
+    # local fallback
+    if {_state} is true:
+        setFrozenLocal({_name}, true, {_by})
+    else:
+        setFrozenLocal({_name}, false)
+
+    # redis (si redis down -> pas bloquant)
+    persistFreezeRedis({_name}, {_state}, {_by})
+    publishFreezeRedis({_name}, {_state}, {_by})
+
+    # applique si le joueur est online sur ce backend
+    set {_p} to {_name} parsed as player
+    if {_p} is set:
+        if {_state} is true:
+            applyFrozenEffects({_p})
+            msgFrozen({_p})
+        else:
+            clearFrozenEffects({_p})
+
+# =========================================================
+# Receive Redis Pub/Sub (sync temps réel)
+# =========================================================
+
+on redis message:
+    if redis channel is "{@chan_freeze}":
+        set {_raw} to redis message
+        set {_parts::*} to split {_raw} at "|"
+
+        set {_name} to {_parts::1}
+        set {_state} to {_parts::2}
+        set {_by} to {_parts::3}
+
+        if {_name} is not set:
+            stop
+
+        if {_state} is "1":
+            setFrozenLocal({_name}, true, {_by})
+        else:
+            setFrozenLocal({_name}, false)
+
+        set {_p} to {_name} parsed as player
+        if {_p} is set:
+            if {_state} is "1":
+                applyFrozenEffects({_p})
+                msgFrozen({_p})
+            else:
+                clearFrozenEffects({_p})
+
+# =========================================================
+# On join: lecture Redis immédiate (pas d'attente => protège direct)
+# IMPORTANT: évite la fenêtre où il peut prendre des dégâts après switch serveur
+# =========================================================
+
+on join:
+    if player has permission "{@perm_bypass}":
+        stop
+
+    set {_k} to redisKey(name of player)
+    if {_k} exists:
+        set {_v} to redis string {_k}
+        if {_v} starts with "1|":
+            setFrozenLocal(name of player, true)
+            applyFrozenEffects(player)
+            msgFrozen(player)
+            stop
+
+    # fallback local
+    if isFrozen(name of player) is true:
+        applyFrozenEffects(player)
+        msgFrozen(player)
+
+# =========================================================
+# Purge local fallback (reste local) : 1x/jour
+# =========================================================
+
+every 1 day:
+    loop {freeze::ts::*}:
+        set {_name} to loop-index
+        set {_ts} to loop-value
+        if {_ts} is not set:
+            delete {freeze::%{_name}%}
+            delete {freeze::ts::%{_name}%}
+            delete {freeze::by::%{_name}%}
+            stop
+
+        if difference between now and {_ts} > {@local_ttl_days} days:
+            set {_p} to {_name} parsed as player
+            if {_p} is not set:
+                delete {freeze::%{_name}%}
+                delete {freeze::ts::%{_name}%}
+                delete {freeze::by::%{_name}%}
+
+# =========================================================
+# Blocages (freeze total)
+# =========================================================
+
+# mouvement
+on player move:
+    if player has permission "{@perm_bypass}":
+        stop
+    if isFrozen(name of player) is true:
+        cancel event
+        send "{@msg_frozen_short}" to player
+
+# interractions
+on right click:
+    if player has permission "{@perm_bypass}":
+        stop
+    if isFrozen(name of player) is true:
+        cancel event
+        send "{@msg_frozen_short}" to player
+
+on left click:
+    if player has permission "{@perm_bypass}":
+        stop
+    if isFrozen(name of player) is true:
+        cancel event
+        send "{@msg_frozen_short}" to player
+
+on inventory click:
+    if player has permission "{@perm_bypass}":
+        stop
+    if isFrozen(name of player) is true:
+        cancel event
+        send "{@msg_frozen_short}" to player
+
+on drop:
+    if player has permission "{@perm_bypass}":
+        stop
+    if isFrozen(name of player) is true:
+        cancel event
+        send "{@msg_frozen_short}" to player
+
+on pickup:
+    if player has permission "{@perm_bypass}":
+        stop
+    if isFrozen(name of player) is true:
+        cancel event
+
+# teleport (commands/plugins/enderpearl/chorus etc.)
+on teleport:
+    if player has permission "{@perm_bypass}":
+        stop
+    if isFrozen(name of player) is true:
+        cancel event
+        send "{@msg_frozen_short}" to player
+
+# commandes (/hub etc.)
+on command:
+    if player has permission "{@perm_bypass}":
+        stop
+    if isFrozen(name of player) is true:
+        set {_cmd} to "/%command%"
+        set {_ok} to false
+
+        set {_allowed::*} to {@allow_cmds} split at ", "
+        loop {_allowed::*}:
+            if {_cmd} starts with loop-value:
+                set {_ok} to true
+                stop loop
+
+        if {_ok} is false:
+            cancel event
+            send "{@msg_frozen_short}" to player
+
+# degats (IMPORTANT: protège cross-server)
+on damage:
+    if victim is a player:
+        if victim has permission "{@perm_bypass}":
+            stop
+        if isFrozen(name of victim) is true:
+            cancel event
+
+# =========================================================
+# Commandes staff (offline OK)
+# - /freeze <name> [on|off]
+# - /unfreeze <name>
+# =========================================================
+
+command /freeze <text> [<text>]:
+    permission: {@perm_freeze}
+    permission message: "{@msg_no_perm}"
+    trigger:
+        set {_name} to normName(arg-1)
+        set {_mode} to ""
+        if arg-2 is set:
+            set {_mode} to lowercase arg-2
+
+        # si online sur ce backend => respecte bypass
+        set {_t} to {_name} parsed as player
+        if {_t} is set:
+            if {_t} has permission "{@perm_bypass}":
+                send "{@msg_bypass}" to player
+                stop
+
+        # on/off
+        if {_mode} is "on":
+            setFreezeGlobal({_name}, true, name of player)
+            send "{@msg_staff_frozen}" to player
+            stop
+
+        if {_mode} is "off":
+            setFreezeGlobal({_name}, false, name of player)
+            send "{@msg_staff_unfrozen}" to player
+            stop
+
+        # toggle
+        if isFrozen({_name}) is true:
+            setFreezeGlobal({_name}, false, name of player)
+            send "{@msg_staff_unfrozen}" to player
+        else:
+            setFreezeGlobal({_name}, true, name of player)
+            send "{@msg_staff_frozen}" to player
+
+
+command /unfreeze <text>:
+    permission: {@perm_freeze}
+    permission message: "{@msg_no_perm}"
+    trigger:
+        set {_name} to normName(arg-1)
+        setFreezeGlobal({_name}, false, name of player)
+        send "{@msg_staff_unfrozen}" to player
+
+# =========================================================
+# TAB COMPLETE (compatible chez toi)
+# =========================================================
+
+on tab complete of "/freeze":
+    # joueurs
+    if event-string is "/freeze ":
+        set tab completions to all players
+        stop
+
+    # si le joueur a déjà mis le pseudo et a mis un espace à la fin => on/off
+    if event-string starts with "/freeze ":
+        if event-string ends with " ":
+            set tab completions to "on" and "off"
+            stop
+
+    if event-string starts with "/freeze":
+        set tab completions to all players
+
+on tab complete of "/unfreeze":
+    if event-string starts with "/unfreeze":
+        set tab completions to all players

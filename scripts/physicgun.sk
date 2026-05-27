@@ -1,0 +1,281 @@
+options:
+    prefix: &7[&dPhysGun&7] &r
+    perm_use: physgun.use
+    perm_admin: physgun.admin
+    physgun_channel: staff:physgun
+    physgun_key: physgun:global
+    max_distance: 6
+    throw_forward: 2.4
+    throw_up: 0.7
+
+# =========================================================
+# LOCAL STATE + REDIS
+# =========================================================
+
+function isPhysGunEnabled(name: text) :: boolean:
+    if {physgun::%{_name}%} is set:
+        return true
+    return false
+
+function setPhysGunLocal(name: text, state: boolean):
+    if {_state} is true:
+        set {physgun::%{_name}%} to true
+    else:
+        delete {physgun::%{_name}%}
+
+function broadcastPhysGun(name: text, state: boolean):
+    if {_state} is true:
+        send redis message "%{_name}%|1" to channel "{@physgun_channel}"
+    else:
+        send redis message "%{_name}%|0" to channel "{@physgun_channel}"
+
+function persistPhysGunRedis(state: boolean):
+    run redis async:
+        if {_state} is true:
+            set redis string "{@physgun_key}" to "1"
+        else:
+            delete redis string "{@physgun_key}"
+
+function refreshPhysGunGlobal():
+    if redis string "{@physgun_key}" is "1":
+        setPhysGunLocal("global", true)
+    else:
+        setPhysGunLocal("global", false)
+
+# =========================
+# COMMANDS
+# =========================
+
+command /physgun [<text>] [<text>]:
+    trigger:
+        if arg-1 is "admin":
+            if player does not have permission "{@perm_admin}":
+                send "{@prefix}&cPermission refusée." to player
+                stop
+            if arg-2 matches "on|1|true":
+                setPhysGunLocal("global", true)
+                persistPhysGunRedis(true)
+                broadcastPhysGun("global", true)
+                send "{@prefix}&aPhysGun &aactivé." to player
+            else if arg-2 matches "off|0|false":
+                setPhysGunLocal("global", false)
+                persistPhysGunRedis(false)
+                broadcastPhysGun("global", false)
+                send "{@prefix}&cPhysGun &cdésactivé." to player
+            else:
+                send "{@prefix}&cUtilise: /physgun admin <on|off>" to player
+        else:
+            if player does not have permission "{@perm_use}":
+                send "{@prefix}&cPermission refusée." to player
+                stop
+            give player blaze rod named "&dPhysGun" with lore "&7Clic droit joueur: grab" and "&7Clic gauche: throw" and "&7Sneak + clic droit: drop"
+            send "{@prefix}&aPhysGun donnée."
+
+# =========================
+# FUNCTIONS
+# =========================
+
+function isPhysGun(i: item) :: boolean:
+    if {_i} is blaze rod named "&dPhysGun":
+        return true
+    return false
+
+function isHolding(p: player) :: boolean:
+    if {physgun::held::%name of {_p}%} is set:
+        return true
+    return false
+
+function heldPlayer(p: player) :: player:
+    set {_n} to {physgun::held::%name of {_p}%}
+    return {_n} parsed as player
+
+function clearHold(holder: player):
+    if {physgun::held::%name of {_holder}%} is set:
+        set {_tName} to {physgun::held::%name of {_holder}%}
+        delete {physgun::held::%name of {_holder}%}
+        if {_tName} is set:
+            delete {physgun::holderof::%{_tName}%}
+
+function dismountVanilla(t: player):
+    make {_t} dismount
+
+function dropHeld(holder: player, silent: boolean = false):
+    if isHolding({_holder}) is false:
+        if {_silent} is false:
+            send "{@prefix}&cTu ne tiens personne." to {_holder}
+        stop
+
+    set {_t} to heldPlayer({_holder})
+    clearHold({_holder})
+    if {_t} is set:
+        dismountVanilla({_t})
+
+    if {_silent} is false:
+        send "{@prefix}&aTu as lâché &e%{_t}%&a." to {_holder}
+        if {_t} is set:
+            send "{@prefix}&dTu as été lâché." to {_t}
+
+function throwHeld(holder: player):
+    if isHolding({_holder}) is false:
+        send "{@prefix}&cTu ne tiens personne." to {_holder}
+        stop
+
+    set {_t} to heldPlayer({_holder})
+    clearHold({_holder})
+
+    if {_t} is not set:
+        send "{@prefix}&cJoueur introuvable." to {_holder}
+        stop
+
+    dismountVanilla({_t})
+
+    # aligner la direction du joueur porté sur celle du porteur
+    set {_loc} to location of {_t}
+    set yaw of {_loc} to yaw of {_holder}
+    set pitch of {_loc} to pitch of {_holder}
+    teleport {_t} to {_loc}
+
+    # propulsion
+    push {_t} forward at speed {@throw_forward}
+    push {_t} upwards at speed {@throw_up}
+
+    send "{@prefix}&aTu as propulsé &e%{_t}%&a." to {_holder}
+    # send "{@prefix}&dWOOSH 💨" to {_t}
+
+
+
+on rightclick on player:
+    if isPhysGun(player's tool) is false:
+        stop
+    if player does not have permission "staff":
+        if isPhysGunEnabled("global") is not true:
+            send "{@prefix}&cLe PhysGun est actuellement désactivé." to player
+            stop
+    if isHolding(player) is true:
+        stop
+
+    set {_t} to clicked entity
+    if distance between player and {_t} > {@max_distance}:
+        stop
+
+    make {_t} ride player
+    set {physgun::held::%name of player%} to name of {_t}
+    set {physgun::holderof::%name of {_t}%} to name of player
+
+    send "{@prefix}&aTu tiens &e%{_t}%&a." to player
+
+# =========================
+# DROP
+# =========================
+
+on rightclick:
+    if isPhysGun(player's tool) is false:
+        stop
+    if player is sneaking:
+        if isHolding(player) is true:
+            dropHeld(player)
+
+# =========================
+# THROW
+# =========================
+
+on leftclick:
+    if isPhysGun(player's tool) is false:
+        stop
+    if player does not have permission "staff":
+        if isPhysGunEnabled("global") is not true:
+            send "{@prefix}&cLe PhysGun est actuellement désactivé." to player
+            stop
+    if isHolding(player) is true:
+        throwHeld(player)
+
+# =========================
+# REDIS RECEIVE
+# =========================
+
+on redis message:
+    if redis channel is "{@physgun_channel}":
+        set {_parts::*} to split redis message at "|"
+        set {_name} to {_parts::1}
+        set {_state} to {_parts::2}
+
+        if {_name} is not set:
+            stop
+
+        if {_state} is "1":
+            setPhysGunLocal({_name}, true)
+        else:
+            setPhysGunLocal({_name}, false)
+
+# =========================
+# APPLY ON JOIN
+# =========================
+
+on join:
+    wait 1 tick
+    refreshPhysGunGlobal()
+
+# =========================
+# ANTI DISMOUNT
+# =========================
+
+on dismount:
+    if {physgun::holderof::%name of player%} is set:
+        set {_hName} to {physgun::holderof::%name of player%}
+
+        # BYPASS : le staff peut descendre, mais on nettoie les variables
+        if player has permission "staff":
+            delete {physgun::holderof::%name of player%}
+            delete {physgun::held::%{_hName}%}
+            stop
+
+        # Les autres ne peuvent pas descendre
+        cancel event
+        wait 1 tick
+        set {_h} to {_hName} parsed as player
+        if {_h} is set:
+            make player ride {_h}
+
+# =========================
+# ESCAPE POUR LA PERSONNE PORTÉE
+# =========================
+
+on player jump:
+    if player is sneaking:
+        if {physgun::holderof::%name of player%} is set:
+            set {_hName} to {physgun::holderof::%name of player%}
+            dropHeld({_hName} parsed as player, false)
+
+
+# =========================
+# CLEANUP
+# =========================
+
+on quit:
+    if {physgun::held::%name of player%} is set:
+        dropHeld(player, true)
+
+on death:
+    if victim is a player:
+        if {physgun::held::%name of victim%} is set:
+            dropHeld(victim, true)
+
+# =========================
+# TAB COMPLETE
+# =========================
+
+on tab complete of "/physgun":
+    if event-string is "/physgun ":
+        set tab completions to "admin"
+        stop
+
+    if event-string is "/physgun admin ":
+        set tab completions to "on" and "off"
+        stop
+
+    if event-string starts with "/physgun admin":
+        set tab completions to "on" and "off"
+        stop
+
+    if event-string starts with "/physgun":
+        set tab completions to "admin"

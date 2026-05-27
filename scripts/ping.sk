@@ -1,0 +1,34 @@
+options:
+    ping_prefix: &8[&bPing&8] &7
+
+command /ping [<player>]:
+    aliases: ms
+    trigger:
+        if arg-1 is set:
+            if player has permission "staff":
+                set {_cible} to arg-1
+            else:
+                send "{@ping_prefix}&cTu n'as pas la permission de voir le ping des autres joueurs."
+                stop
+        else:
+            set {_cible} to player
+
+        set {_ping} to ping of {_cible}
+
+        if {_ping} < 60:
+            set {_etat} to "&aExcellente"
+            set {_barre} to "&a|||||"
+        else if {_ping} < 120:
+            set {_etat} to "&eCorrecte"
+            set {_barre} to "&e||||&7|"
+        else if {_ping} < 200:
+            set {_etat} to "&6Lente"
+            set {_barre} to "&6|||&7||"
+        else:
+            set {_etat} to "&cInstable"
+            set {_barre} to "&c||&7|||"
+
+        if {_cible} is player:
+            send "{@ping_prefix}&fPing: &b%{_ping}%ms &8| &fEtat: %{_etat}% &8| %{_barre}%"
+        else:
+            send "{@ping_prefix}&fPing de &b%name of {_cible}%&f: &b%{_ping}%ms &8| &fEtat: %{_etat}% &8| %{_barre}%"

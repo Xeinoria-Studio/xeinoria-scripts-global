@@ -1,0 +1,59 @@
+on command "pv":
+    sender is not console
+    if canVault(player) is false:
+        cancel event
+        send "You don't have permission to use this command." to player
+
+on command "playervaults:pv":
+    sender is not console
+    if canVault(player) is false:
+        cancel event
+        send "You don't have permission to use this command." to player
+
+on command "pvhelp":
+    sender is not console
+    if canVault(player) is false:
+        cancel event
+        send "You don't have permission to use this command." to player
+
+on command "playervaults:pvhelp":
+    sender is not console
+    if canVault(player) is false:
+        cancel event
+        send "You don't have permission to use this command." to player
+    cancel event
+    send "You don't have permission to use this command." to player
+
+on command "playervault":
+    sender is not console
+    if canVault(player) is false:
+        cancel event
+        send "You don't have permission to use this command." to player
+
+on command "playervaults:playervault":
+    sender is not console
+    if canVault(player) is false:
+        cancel event
+        send "You don't have permission to use this command." to player
+
+on command "vault":
+    sender is not console
+    if canVault(player) is false:
+        cancel event
+        send "You don't have permission to use this command." to player
+    cancel event
+    send "You don't have permission to use this command." to player
+
+on command "playervaults:vault":
+    sender is not console
+    if canVault(player) is false:
+        cancel event
+        send "You don't have permission to use this command." to player
+
+function canVault(p: player) :: boolean:
+    if {_p} has permission "admin":
+        return true
+    # if {_p} has permission "staff":
+    #     return true
+    return false
+

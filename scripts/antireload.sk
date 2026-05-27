@@ -1,0 +1,3 @@
+on command "reload":
+    cancel event
+    send "Reloading is disabled." to sender

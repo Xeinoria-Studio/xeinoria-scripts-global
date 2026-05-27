@@ -1,0 +1,61 @@
+options:
+    prefix: &6[Moderation] &r
+    perm_heal: heal.use
+    perm_heal_others: heal.others
+    perm_feed: feed.use
+    perm_feed_others: feed.others
+
+# -------------------------
+# /heal [<player>]
+# -------------------------
+
+command /heal [<player>]:
+    permission: {@perm_heal}
+    permission message: "{@prefix}&cTu n'as pas la permission."
+    trigger:
+        if arg-1 is set:
+            if player does not have permission "{@perm_heal_others}":
+                send "{@prefix}&cTu ne peux pas soigner les autres."
+                stop
+            set {_target} to arg-1
+        else:
+            set {_target} to player
+
+        set health of {_target} to max health of {_target}
+        extinguish {_target}
+        # Clear all active effects (Skript syntax)
+        clear {_target}'s active potion effects
+                
+        # Extra-safe: specifically cure poison (au cas où)
+        cure {_target} from poison
+
+        if {_target} is player:
+            send "{@prefix}&aTu as été entièrement soigné."
+        else:
+            send "{@prefix}&aTu as soigné &e%{_target}%&a."
+            send "{@prefix}&aTu as été soigné par &e%player%&a." to {_target}
+
+# -------------------------
+# /feed [<player>]
+# -------------------------
+
+command /feed [<player>]:
+    permission: {@perm_feed}
+    permission message: "{@prefix}&cTu n'as pas la permission."
+    trigger:
+        if arg-1 is set:
+            if player does not have permission "{@perm_feed_others}":
+                send "{@prefix}&cTu ne peux pas nourrir les autres."
+                stop
+            set {_target} to arg-1
+        else:
+            set {_target} to player
+
+        set food level of {_target} to 20
+        set saturation of {_target} to 20
+
+        if {_target} is player:
+            send "{@prefix}&aTu n'as plus faim."
+        else:
+            send "{@prefix}&aTu as nourri &e%{_target}%&a."
+            send "{@prefix}&aTu as été nourri par &e%player%&a." to {_target}

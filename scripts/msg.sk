@@ -1,0 +1,544 @@
+options:
+    pm_prefix: &8[&dMP&8]&r
+    pm_channel: network:pm
+    pm_presence_channel: network:pm:presence
+    pm_server_name: SURVIE
+    pm_servers: survie, crea, honeypot, old, test, nwland, hub
+    pm_reply_window_minutes: 5
+
+function pmNorm(name: text) :: text:
+    return lowercase {_name}
+
+function pmOnlineKey(name: text) :: text:
+    return "pm:online:%pmNorm({_name})%"
+
+function pmVisibleKey(name: text) :: text:
+    return "pm:visible:%pmNorm({_name})%"
+
+function pmServerListKey(server: text) :: text:
+    return "pm:online:server:%pmNorm({_server})%"
+
+function pmIsVanished(target: player) :: boolean:
+    set {_v} to placeholder "premiumvanish_isvanished" from {_target}
+    if {_v} is "Yes":
+        return true
+    return false
+
+function pmSyncVisibility(p: player):
+    set {_kOnline} to pmOnlineKey(name of {_p})
+    set {_kVisible} to pmVisibleKey(name of {_p})
+
+    set redis string {_kOnline} to name of {_p}
+
+    if pmIsVanished({_p}) is true:
+        set redis string {_kVisible} to "0"
+    else:
+        set redis string {_kVisible} to "1"
+
+function pmSetPresenceLocal(name: text, visible: boolean):
+    set {_n} to pmNorm({_name})
+    set {pm.network.online::%{_n}%} to {_name}
+    set {pm.network.lastseen::%{_n}%} to now
+    if {_visible} is true:
+        set {pm.network.visible::%{_n}%} to "1"
+    else:
+        set {pm.network.visible::%{_n}%} to "0"
+
+function pmClearPresenceLocal(name: text):
+    set {_n} to pmNorm({_name})
+    delete {pm.network.online::%{_n}%}
+    delete {pm.network.visible::%{_n}%}
+    delete {pm.network.lastseen::%{_n}%}
+
+function pmPublishPresence(name: text, visible: boolean):
+    if {_visible} is true:
+        send redis message "up|%{_name}%|1" to channel "{@pm_presence_channel}"
+    else:
+        send redis message "up|%{_name}%|0" to channel "{@pm_presence_channel}"
+
+function pmPublishOffline(name: text):
+    send redis message "down|%{_name}%" to channel "{@pm_presence_channel}"
+
+function pmPublishServerSnapshot():
+    delete {_parts::*}
+    loop all players:
+        if pmIsVanished(loop-player) is true:
+            add "%name of loop-player%;0" to {_parts::*}
+        else:
+            add "%name of loop-player%;1" to {_parts::*}
+
+    if {_parts::*} is not set:
+        delete redis string pmServerListKey("{@pm_server_name}")
+        stop
+
+    set {_raw} to join {_parts::*} with ","
+    set redis string pmServerListKey("{@pm_server_name}") to {_raw}
+
+function pmTabMergeServer(viewer: player, server: text):
+    set {_k} to pmServerListKey({_server})
+    if {_k} exists:
+        set {_raw} to redis string {_k}
+        if {_raw} is set:
+            if {_raw} is not "":
+                set {_entries::*} to {_raw} split at ","
+                loop {_entries::*}:
+                    set {_entry::*} to loop-value split at ";"
+                    set {_name} to {_entry::1}
+                    set {_visibleRaw} to {_entry::2}
+                    if {_name} is set:
+                        set {_n} to pmNorm({_name})
+                        if {_n} is pmNorm(name of {_viewer}):
+                            set {pm.tab.map::%uuid of {_viewer}%::%{_n}%} to {_name}
+                        else if {_viewer} has permission "premiumvanish.see":
+                            set {pm.tab.map::%uuid of {_viewer}%::%{_n}%} to {_name}
+                        else if {_visibleRaw} is "1":
+                            set {pm.tab.map::%uuid of {_viewer}%::%{_n}%} to {_name}
+
+function pmTabMergeAllServers(viewer: player):
+    set {_listRaw} to "{@pm_servers}"
+    if {_listRaw} is not set:
+        stop
+    if {_listRaw} is "":
+        stop
+
+    set {_listRaw} to pmNorm({_listRaw})
+    replace all " " with "" in {_listRaw}
+    set {_servers::*} to {_listRaw} split at ","
+    loop {_servers::*}:
+        if loop-value is set:
+            if loop-value is not "":
+                pmTabMergeServer({_viewer}, loop-value)
+
+function pmNameIsVanished(name: text) :: boolean:
+    set {_p} to {_name} parsed as player
+    if {_p} is set:
+        if pmIsVanished({_p}) is true:
+            return true
+        return false
+
+    set {_k} to pmVisibleKey({_name})
+    if {_k} exists:
+        set {_v} to redis string {_k}
+        if {_v} is "0":
+            return true
+
+    return false
+
+function pmNameIsOnline(name: text) :: boolean:
+    set {_p} to {_name} parsed as player
+    if {_p} is set:
+        return true
+
+    set {_k} to pmOnlineKey({_name})
+    if {_k} exists:
+        return true
+
+    return false
+
+function pmSetTempAllow(viewerName: text, targetName: text):
+    set {pm.allow.ts::%pmNorm({_viewerName})%::%pmNorm({_targetName})%} to now
+
+function pmClearTempAllow(viewerName: text, targetName: text):
+    delete {pm.allow.ts::%pmNorm({_viewerName})%::%pmNorm({_targetName})%}
+
+function pmHasTempAllow(viewerName: text, targetName: text) :: boolean:
+    set {_vn} to pmNorm({_viewerName})
+    set {_tn} to pmNorm({_targetName})
+
+    if {pm.allow.ts::%{_vn}%::%{_tn}%} is not set:
+        return false
+
+    set {_ts} to {pm.allow.ts::%{_vn}%::%{_tn}%}
+    if difference between now and {_ts} > {@pm_reply_window_minutes} minutes:
+        pmClearTempAllow({_viewerName}, {_targetName})
+        return false
+
+    return true
+
+function pmCanSeeTarget(viewer: player, target: player) :: boolean:
+    if {_viewer} is {_target}:
+        return true
+
+    if pmIsVanished({_target}) is true:
+        if {_viewer} has permission "premiumvanish.see":
+            return true
+        return false
+
+    return true
+
+function pmCanMessageName(sender: player, targetName: text) :: boolean:
+    if {_sender} has permission "premiumvanish.see":
+        return true
+
+    if pmNameIsVanished({_targetName}) is true:
+        if pmHasTempAllow(name of {_sender}, {_targetName}) is true:
+            return true
+        return false
+
+    return true
+
+function pmResolveNameForSender(sender: player, raw: text) :: text:
+    set {_rawNorm} to pmNorm({_raw})
+
+    loop all players:
+        if pmNorm(name of loop-player) is {_rawNorm}:
+            if pmCanMessageName({_sender}, name of loop-player) is true:
+                return name of loop-player
+            return ""
+
+    set {_k} to pmOnlineKey({_rawNorm})
+    if {_k} exists:
+        set {_resolved} to redis string {_k}
+        if {_resolved} is set:
+            if pmCanMessageName({_sender}, {_resolved}) is true:
+                return {_resolved}
+
+    return ""
+
+function pmSetReply(nameA: text, nameB: text):
+    set {pm.reply.target::%pmNorm({_nameA})%} to {_nameB}
+    set {pm.reply.target::%pmNorm({_nameB})%} to {_nameA}
+    set {pm.reply.ts::%pmNorm({_nameA})%} to now
+    set {pm.reply.ts::%pmNorm({_nameB})%} to now
+
+function pmClearReply(name: text):
+    delete {pm.reply.target::%pmNorm({_name})%}
+    delete {pm.reply.ts::%pmNorm({_name})%}
+
+function pmGetReply(name: text) :: text:
+    set {_n} to pmNorm({_name})
+    if {pm.reply.target::%{_n}%} is set:
+        if {pm.reply.ts::%{_n}%} is set:
+            set {_ts} to {pm.reply.ts::%{_n}%}
+            if difference between now and {_ts} <= {@pm_reply_window_minutes} minutes:
+                return {pm.reply.target::%{_n}%}
+
+    pmClearReply({_name})
+
+    return ""
+
+function pmSendRedis(fromName: text, toName: text, content: text):
+    set {_safe} to {_content}
+    replace all "|" with "/" in {_safe}
+    send redis message "%{_fromName}%|%{_toName}%|%{_safe}%" to channel "{@pm_channel}"
+
+function pmFormatOut(toName: text, content: text) :: text:
+    return "{@pm_prefix} &7-> &d%{_toName}%&8: &f%{_content}%"
+
+function pmFormatIn(fromName: text, content: text) :: text:
+    return "{@pm_prefix} &d%{_fromName}% &7-> toi&8: &f%{_content}%"
+
+function pmDeliverFromRedis(fromName: text, toName: text, content: text):
+    set {_fromP} to {_fromName} parsed as player
+    set {_toP} to {_toName} parsed as player
+
+    if {_fromP} is set:
+        send pmFormatOut({_toName}, {_content}) to {_fromP}
+
+    if {_toP} is set:
+        send pmFormatIn({_fromName}, {_content}) to {_toP}
+
+    if pmNameIsVanished({_fromName}) is true:
+        pmSetTempAllow({_toName}, {_fromName})
+
+    pmSetReply({_fromName}, {_toName})
+
+on join:
+    pmSyncVisibility(player)
+    pmPublishServerSnapshot()
+    if pmIsVanished(player) is true:
+        pmSetPresenceLocal(name of player, false)
+        pmPublishPresence(name of player, false)
+    else:
+        pmSetPresenceLocal(name of player, true)
+        pmPublishPresence(name of player, true)
+
+on quit:
+    pmPublishOffline(name of player)
+    pmPublishServerSnapshot()
+    delete redis string pmOnlineKey(name of player)
+    delete redis string pmVisibleKey(name of player)
+    pmClearPresenceLocal(name of player)
+
+    set {_n} to pmNorm(name of player)
+    delete {pm.allow.ts::%{_n}%::*}
+    loop {pm.allow.ts::*}:
+        if loop-index ends with "::%{_n}%":
+            delete {pm.allow.ts::%loop-index%}
+
+    pmClearReply(name of player)
+
+every 10 seconds:
+    pmPublishServerSnapshot()
+    loop all players:
+        pmSyncVisibility(loop-player)
+        if pmIsVanished(loop-player) is true:
+            pmSetPresenceLocal(name of loop-player, false)
+            pmPublishPresence(name of loop-player, false)
+        else:
+            pmSetPresenceLocal(name of loop-player, true)
+            pmPublishPresence(name of loop-player, true)
+
+every 1 minute:
+    loop {pm.reply.ts::*}:
+        set {_ts} to loop-value
+        if difference between now and {_ts} > {@pm_reply_window_minutes} minutes:
+            delete {pm.reply.ts::%loop-index%}
+            delete {pm.reply.target::%loop-index%}
+
+    loop {pm.allow.ts::*}:
+        set {_ts} to loop-value
+        if difference between now and {_ts} > {@pm_reply_window_minutes} minutes:
+            delete {pm.allow.ts::%loop-index%}
+
+    loop {pm.network.lastseen::*}:
+        set {_ts} to loop-value
+        if difference between now and {_ts} > 45 seconds:
+            delete {pm.network.lastseen::%loop-index%}
+            delete {pm.network.online::%loop-index%}
+            delete {pm.network.visible::%loop-index%}
+
+on redis message:
+    if redis channel is "{@pm_presence_channel}":
+        set {_parts::*} to split redis message at "|"
+        set {_action} to {_parts::1}
+        set {_name} to {_parts::2}
+        set {_visibleRaw} to {_parts::3}
+
+        if {_action} is not set:
+            stop
+        if {_name} is not set:
+            stop
+
+        if {_action} is "down":
+            pmClearPresenceLocal({_name})
+            stop
+
+        if {_action} is "up":
+            if {_visibleRaw} is "0":
+                pmSetPresenceLocal({_name}, false)
+            else:
+                pmSetPresenceLocal({_name}, true)
+            stop
+
+    if redis channel is "{@pm_channel}":
+        set {_parts::*} to split redis message at "|"
+        set {_fromName} to {_parts::1}
+        set {_toName} to {_parts::2}
+        set {_content} to {_parts::3}
+
+        if {_fromName} is not set:
+            stop
+        if {_toName} is not set:
+            stop
+        if {_content} is not set:
+            stop
+
+        pmDeliverFromRedis({_fromName}, {_toName}, {_content})
+
+on command "minecraft:msg":
+    sender is not console
+    cancel event
+    send "{@pm_prefix} &cCommande vanilla bloquee. Utilise &f/msg&c." to player
+
+on command "minecraft:tell":
+    sender is not console
+    cancel event
+    send "{@pm_prefix} &cCommande vanilla bloquee. Utilise &f/tell&c." to player
+
+on command "minecraft:w":
+    sender is not console
+    cancel event
+    send "{@pm_prefix} &cCommande vanilla bloquee. Utilise &f/w&c." to player
+
+on command "minecraft:whisper":
+    sender is not console
+    cancel event
+    send "{@pm_prefix} &cCommande vanilla bloquee. Utilise &f/w&c." to player
+
+on command "minecraft:reply":
+    sender is not console
+    cancel event
+    send "{@pm_prefix} &cCommande vanilla bloquee. Utilise &f/reply&c." to player
+
+on command "minecraft:r":
+    sender is not console
+    cancel event
+    send "{@pm_prefix} &cCommande vanilla bloquee. Utilise &f/r&c." to player
+
+command /msg <text> <text>:
+    trigger:
+        set {_toRaw} to arg-1
+        set {_content} to arg-2
+        set {_toName} to pmResolveNameForSender(player, {_toRaw})
+
+        if {_toName} is "":
+            send "{@pm_prefix} &cJoueur introuvable ou hors ligne." to player
+            stop
+
+        if pmNorm({_toName}) is pmNorm(name of player):
+            send "{@pm_prefix} &cTu ne peux pas t'envoyer un message." to player
+            stop
+
+        pmSendRedis(name of player, {_toName}, {_content})
+
+command /tell <text> <text>:
+    trigger:
+        set {_toRaw} to arg-1
+        set {_content} to arg-2
+        set {_toName} to pmResolveNameForSender(player, {_toRaw})
+
+        if {_toName} is "":
+            send "{@pm_prefix} &cJoueur introuvable ou hors ligne." to player
+            stop
+
+        if pmNorm({_toName}) is pmNorm(name of player):
+            send "{@pm_prefix} &cTu ne peux pas t'envoyer un message." to player
+            stop
+
+        pmSendRedis(name of player, {_toName}, {_content})
+
+command /w <text> <text>:
+    trigger:
+        set {_toRaw} to arg-1
+        set {_content} to arg-2
+        set {_toName} to pmResolveNameForSender(player, {_toRaw})
+
+        if {_toName} is "":
+            send "{@pm_prefix} &cJoueur introuvable ou hors ligne." to player
+            stop
+
+        if pmNorm({_toName}) is pmNorm(name of player):
+            send "{@pm_prefix} &cTu ne peux pas t'envoyer un message." to player
+            stop
+
+        pmSendRedis(name of player, {_toName}, {_content})
+
+command /r <text>:
+    trigger:
+        set {_content} to arg-1
+        set {_toName} to pmGetReply(name of player)
+
+        if {_toName} is "":
+            send "{@pm_prefix} &cPersonne a qui repondre." to player
+            stop
+
+        if pmNameIsOnline({_toName}) is false:
+            pmClearReply(name of player)
+            send "{@pm_prefix} &cCe joueur n'est plus disponible." to player
+            stop
+
+        if pmCanMessageName(player, {_toName}) is false:
+            pmClearReply(name of player)
+            send "{@pm_prefix} &cCe joueur n'est plus disponible." to player
+            stop
+
+        pmSendRedis(name of player, {_toName}, {_content})
+
+command /reply <text>:
+    trigger:
+        set {_content} to arg-1
+        set {_toName} to pmGetReply(name of player)
+
+        if {_toName} is "":
+            send "{@pm_prefix} &cPersonne a qui repondre." to player
+            stop
+
+        if pmNameIsOnline({_toName}) is false:
+            pmClearReply(name of player)
+            send "{@pm_prefix} &cCe joueur n'est plus disponible." to player
+            stop
+
+        if pmCanMessageName(player, {_toName}) is false:
+            pmClearReply(name of player)
+            send "{@pm_prefix} &cCe joueur n'est plus disponible." to player
+            stop
+
+        pmSendRedis(name of player, {_toName}, {_content})
+
+on tab complete of "/msg":
+    if event-string starts with "/msg":
+        delete {pm.tab.map::%uuid of player%::*}
+        delete {_tabs::*}
+
+        loop all players:
+            if pmCanSeeTarget(player, loop-player) is true:
+                set {_n} to pmNorm(name of loop-player)
+                set {pm.tab.map::%uuid of player%::%{_n}%} to name of loop-player
+
+        loop {pm.network.online::*}:
+            set {_n} to loop-index
+            set {_name} to loop-value
+            if {_name} is set:
+                if {_n} is pmNorm(name of player):
+                    set {pm.tab.map::%uuid of player%::%{_n}%} to {_name}
+                else if player has permission "premiumvanish.see":
+                    set {pm.tab.map::%uuid of player%::%{_n}%} to {_name}
+                else if {pm.network.visible::%{_n}%} is "1":
+                    set {pm.tab.map::%uuid of player%::%{_n}%} to {_name}
+
+        pmTabMergeAllServers(player)
+
+        loop {pm.tab.map::%uuid of player%::*}:
+            add loop-value to {_tabs::*}
+
+        set tab completions to {_tabs::*}
+        delete {pm.tab.map::%uuid of player%::*}
+
+on tab complete of "/tell":
+    if event-string starts with "/tell":
+        delete {pm.tab.map::%uuid of player%::*}
+        delete {_tabs::*}
+
+        loop all players:
+            if pmCanSeeTarget(player, loop-player) is true:
+                set {_n} to pmNorm(name of loop-player)
+                set {pm.tab.map::%uuid of player%::%{_n}%} to name of loop-player
+
+        loop {pm.network.online::*}:
+            set {_n} to loop-index
+            set {_name} to loop-value
+            if {_name} is set:
+                if {_n} is pmNorm(name of player):
+                    set {pm.tab.map::%uuid of player%::%{_n}%} to {_name}
+                else if player has permission "premiumvanish.see":
+                    set {pm.tab.map::%uuid of player%::%{_n}%} to {_name}
+                else if {pm.network.visible::%{_n}%} is "1":
+                    set {pm.tab.map::%uuid of player%::%{_n}%} to {_name}
+
+        pmTabMergeAllServers(player)
+
+        loop {pm.tab.map::%uuid of player%::*}:
+            add loop-value to {_tabs::*}
+
+        set tab completions to {_tabs::*}
+        delete {pm.tab.map::%uuid of player%::*}
+
+on tab complete of "/w":
+    if event-string starts with "/w":
+        delete {pm.tab.map::%uuid of player%::*}
+        delete {_tabs::*}
+
+        loop all players:
+            if pmCanSeeTarget(player, loop-player) is true:
+                set {_n} to pmNorm(name of loop-player)
+                set {pm.tab.map::%uuid of player%::%{_n}%} to name of loop-player
+
+        loop {pm.network.online::*}:
+            set {_n} to loop-index
+            set {_name} to loop-value
+            if {_name} is set:
+                if {_n} is pmNorm(name of player):
+                    set {pm.tab.map::%uuid of player%::%{_n}%} to {_name}
+                else if player has permission "premiumvanish.see":
+                    set {pm.tab.map::%uuid of player%::%{_n}%} to {_name}
+                else if {pm.network.visible::%{_n}%} is "1":
+                    set {pm.tab.map::%uuid of player%::%{_n}%} to {_name}
+
+        pmTabMergeAllServers(player)
+
+        loop {pm.tab.map::%uuid of player%::*}:
+            add loop-value to {_tabs::*}
+
+        set tab completions to {_tabs::*}
+        delete {pm.tab.map::%uuid of player%::*}
