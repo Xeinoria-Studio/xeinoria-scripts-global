@@ -1,27 +1,59 @@
 # xeinoria-scripts-global
 
-Skript scripts shared across all Xeinoria Minecraft servers (crea, hub, nwland, survie, test).
+Scripts Skript partages sur l'ensemble du reseau Xeinoria:
+- crea
+- hub
+- nwland
+- survie
+- test
 
-Scripts in this repository are **identical or have been consolidated** across servers.
-Server-specific variants live in each server's own repo.
+English summary: shared Skript scripts used across all Xeinoria servers.
 
-## Usage
+## Structure
 
-This folder is meant to be mounted/cloned into each server's
-`plugins/Skript/scripts/global/` directory. Skript loads scripts recursively,
-so any `.sk` file in that subdirectory will be picked up.
+- `*.sk`: scripts publics communs a tous les serveurs.
+- `lib/`: fonctions utilitaires communes (ex: helper d'environnement).
+- Les scripts sensibles ou reserves staff sont deplaces hors de ce depot public, dans des depots prives deploiables par webhook.
 
-The exact sync mechanism (git submodule, periodic clone, CI deploy) is TBD.
+## Addons requis
 
-## Contents
+Versions actuellement cibles dans l'environnement de dev:
 
-### Category A — Strictly identical across all servers
-acguard, antireload, bring, count, enderchest, fix, god, heal, hidestaff,
-motd, msg, op, physicgun, ping, portal, sculkvoice, stickpush, strike,
-sudo, tab, trello
+| Addon | Version | Source |
+|---|---:|---|
+| Skript | 2.15.2 | https://github.com/SkriptLang/Skript/releases |
+| skript-reflect | 2.6.3 | https://github.com/SkriptLang/skript-reflect/releases |
+| SkBee | 3.22.0 | https://modrinth.com/plugin/skbee |
+| skript-db | 1.3.9 | https://github.com/Sashie/skript-db |
+| Lusk | 1.3.13 | https://modrinth.com/plugin/lusk |
+| SkRedis | 2.3.1 | https://modrinth.com/plugin/skredis |
+| SkProxy | 2.4 | https://modrinth.com/plugin/skproxy |
+| PlaceholderAPI | 2.12.2 | https://github.com/PlaceholderAPI/PlaceholderAPI/releases |
+| VaultUnlocked | 2.17.0+ | https://hangar.papermc.io/TNE/VaultUnlocked |
+| skRayFall | 1.9.30 | https://www.spigotmc.org/resources/skrayfall.10012/ |
+| PermSk | 2.0.0 | https://www.spigotmc.org/resources/permsk.117962/ |
+| skript-placeholders | 1.7.1 | https://www.spigotmc.org/resources/skript-placeholders.103723/ |
+| skUtilities | latest compatible | https://www.spigotmc.org/resources/skutilities.70203/ |
+| skript-worldguard | 1.0.1 | https://github.com/SkriptLang/skript-worldguard/releases |
+| Skript-Translate | 1.2 | (interne reseau) |
 
-### Category B — Consolidated (most-recent version taken as canonical)
-crash, disablecmdpv, fail2ban, forbidden_fruit, freeze, hammer, invframe,
-item, report, translate, vanish-fixes
+## Contribution
 
-Last CI test: 2026-05-27T07:43:07Z
+Voir [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Resume rapide:
+- ouvrir une branche claire (`fix/...`, `feat/...`, `chore/...`)
+- tester sur un serveur de dev avant PR
+- eviter toute fuite de secrets (token, mot de passe, endpoint interne)
+- documenter toute dependance addon nouvelle
+
+## Securite
+
+- Aucun secret ne doit etre commite dans ce repo.
+- Les variables sensibles passent via environnement (`.env.shared`) hors depot.
+- Les scripts staff/sensibles vont dans les depots prives dedies.
+
+## Licence
+
+Ce projet est sous licence **CC BY-NC-SA 4.0**.
+Voir [LICENSE](LICENSE).
