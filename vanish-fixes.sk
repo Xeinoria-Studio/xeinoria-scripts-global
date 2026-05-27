@@ -6,10 +6,13 @@
 #! Detection tipu: API PremiumVanish via skript-reflect (hasItemPickUpsEnabled)
 #! Fallback: Bukkit can pick up items puis PlaceholderAPI
 #! Event SkBee: "on player pickup experience"
+#!
+#! PremiumVanish est un plugin premium et n'est pas forcement present (ex:
+#! image Docker de dev). Toutes les references a VanishAPI sont resolues
+#! dynamiquement via skript-reflect (javatype) et gardees par une verif
+#! `plugin "PremiumVanish" is enabled`, pour que ce script se charge sans
+#! erreur quand le plugin est absent.
 #!===============================================================================
-
-import:
-    de.myzelyam.api.vanish.VanishAPI
 
 on player pickup experience:
     if vanishFixesIsVanished(event-player) is true:
@@ -74,8 +77,18 @@ function vanishFixesCanPickupItems(target: player) :: boolean:
 
 # True/false si l'API PremiumVanish est accessible, sinon value not set.
 function vanishFixesCanPickupItemsApi(target: player) :: object:
-    # Source principale: API interne PremiumVanish (toggle /v tipu).
-    set {_plugin} to VanishAPI.getPlugin()
+    # Plugin absent (ex: image Docker dev) → on retourne "not set" pour
+    # laisser les fallbacks (Bukkit/PlaceholderAPI) prendre le relais.
+    if plugin "PremiumVanish" is not enabled:
+        return
+
+    # Resolution dynamique via skript-reflect: evite l'erreur de chargement
+    # quand la classe est absente du classpath.
+    set {_VanishAPI} to javatype("de.myzelyam.api.vanish.VanishAPI")
+    if {_VanishAPI} is not set:
+        return
+
+    set {_plugin} to {_VanishAPI}.getPlugin()
     if {_plugin} is set:
         set {_vp} to {_plugin}.getVanishPlayer({_target})
         if {_vp} is set:
