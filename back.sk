@@ -54,18 +54,15 @@ function doBack(executor: player, target: player):
 on teleport:
 	if event-entity is not a player:
 		stop
-		
-		# Ne pas enregistrer /back si c'est une ender pearl
+	# Ne pas enregistrer /back si c'est une ender pearl
 	if teleport cause is ender pearl:
 		stop
-		# Ne pas enregistrer /back si c'est un chorus fruit
+	# Ne pas enregistrer /back si c'est un chorus fruit
 	if teleport cause is consumable effect:
 		stop
-		
-		# (garde ton anti-écrasement quand /back téléporte)
-		if isBackIgnored(player) is true:
-			stop
-		
+	# (garde ton anti-écrasement quand /back téléporte)
+	if isBackIgnored(player) is true:
+		stop
 	set {_from} to past event-location
 	if {_from} is set:
 		setBackLoc(player, {_from})
