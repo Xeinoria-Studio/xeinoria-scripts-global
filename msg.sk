@@ -28,9 +28,7 @@ function pmSyncVisibility(p: player):
     set {_kOnline} to pmOnlineKey(name of {_p})
     set {_kVisible} to pmVisibleKey(name of {_p})
 
-    if name of {_p} is set:
-        if name of {_p} is not "":
-            set redis string {_kOnline} to name of {_p}
+    set redis string {_kOnline} to name of {_p}
 
     if pmIsVanished({_p}) is true:
         set redis string {_kVisible} to "0"
@@ -74,9 +72,7 @@ function pmPublishServerSnapshot():
         stop
 
     set {_raw} to join {_parts::*} with ","
-    if {_raw} is set:
-        if {_raw} is not "":
-            set redis string pmServerListKey("{@pm_server_name}") to {_raw}
+    set redis string pmServerListKey("{@pm_server_name}") to {_raw}
 
 function pmTabMergeServer(viewer: player, server: text):
     set {_k} to pmServerListKey({_server})

@@ -286,7 +286,10 @@ function fpPartyAddInvite(targetNorm: text, leaderNorm: text):
     set {_raw} to fpPartyInvitesRaw({_targetNorm})
     set {_raw} to fpCsvAdd({_raw}, {_leaderNorm})
     fpPartyInvitesSetRaw({_targetNorm}, {_raw})
-    set redis string fpPartyLastInviteKey({_targetNorm}) to fpNorm({_leaderNorm})
+    set {_val} to fpNorm({_leaderNorm})
+    if {_val} is set:
+        if {_val} is not "":
+            set redis string fpPartyLastInviteKey({_targetNorm}) to {_val}
 
 function fpPartyGetLastInvite(targetNorm: text) :: text:
     return fpRedisGet(fpPartyLastInviteKey({_targetNorm}))
@@ -552,14 +555,21 @@ function fpPublishLocalSnapshot():
                 set {_csv} to {_n}
             else:
                 set {_csv} to "%{_csv}%,%{_n}%"
-            set redis string fpOnlineNameKey({_n}) to {_server}
-            set redis string fpOnlineDisplayKey({_n}) to name of loop-player
+            if {_server} is set:
+                if {_server} is not "":
+                    set redis string fpOnlineNameKey({_n}) to {_server}
+            set {_display} to name of loop-player
+            if {_display} is set:
+                if {_display} is not "":
+                    set redis string fpOnlineDisplayKey({_n}) to {_display}
 
     if {_csv} is "":
         delete redis string fpOnlineServerKey({_server})
         stop
 
-    set redis string fpOnlineServerKey({_server}) to {_csv}
+    if {_csv} is set:
+        if {_csv} is not "":
+            set redis string fpOnlineServerKey({_server}) to {_csv}
 
 function fpPartyPullLocalMembers(leaderNorm: text, destinationServer: text, manual: boolean):
     set {_leader} to fpNorm({_leaderNorm})
