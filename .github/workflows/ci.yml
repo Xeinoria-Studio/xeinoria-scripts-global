@@ -1,0 +1,14 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  skript:
+    name: Validation Skript
+    uses: Xeinoria-Studio/xeinoria-dev-env/.github/workflows/skript-validate.yml@main
+    with:
+      mount-name: global
