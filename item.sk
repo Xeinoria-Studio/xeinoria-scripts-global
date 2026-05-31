@@ -1,6 +1,6 @@
 on right click on a player:
 	player is wearing leather boots
-	isPantoufle(boots of player)
+	isPantoufle(boots of player) is true
 	make player ride clicked entity
 	
 on boots change:
