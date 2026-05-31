@@ -1,4 +1,8 @@
 on server ping:
+	# Permet de désactiver l'override (laisse le MOTD de server.properties).
+	# Utile en dev-env. Définir XEINORIA_MOTD_DISABLE=true dans l'environnement.
+	if env("XEINORIA_MOTD_DISABLE") is "true":
+		stop
 	set motd to mini message from "<white><obf>!!</obf></white> <gradient:#9b99ff:#ff9b30><bold>Xeinoria</bold></gradient> <white><obf>!!</obf></white> - <color:#ff9b30>The Copper Age</color>%nl%» <color:#ff4596>Nouvelle mise à jour:</color> <color:#45d0ff>1.21.10</color>"
 
 
