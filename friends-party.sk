@@ -647,11 +647,17 @@ function fpRefreshNetworkState():
     delete {fp.net.now.display::*}
 
 on load:
+    set {fp.local.online-key} to fpOnlineServerKey(fpLocalServer())
     fpPublishLocalSnapshot()
     fpRefreshNetworkState()
 
 on unload:
-    delete redis string fpOnlineServerKey(fpLocalServer())
+    # Ne PAS appeler de fonctions ici : à l'unload Skript a déjà déréférencé les
+    # fonctions du script, ce qui produit un NPE (cf. /sk reload all).
+    # On utilise la clé pré-calculée à l'on load.
+    if {fp.local.online-key} is set:
+        delete redis string {fp.local.online-key}
+        delete {fp.local.online-key}
 
 on join:
     fpPublishLocalSnapshot()
